@@ -24,6 +24,10 @@
 16. [Frontend Pages and Components](#-frontend-pages-and-components)
 17. [ML Model — Risk Assessment](#-ml-model--risk-assessment)
 18. [Known Limitations](#-known-limitations)
+19. [Sample API Responses](#-sample-api-responses)
+20. [Development Notes](#-development-notes)
+21. [Quick Start Command Reference](#-quick-start-command-reference)
+22. [License](#-license)
 
 ---
 
@@ -78,26 +82,26 @@ Traditional chatbots hallucinate loan amounts, interest rates, and eligibility c
 
 ## 🏗️ System Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          USER (Browser)                             │
 │                    http://localhost:5173                             │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │ HTTP
 ┌──────────────────────────────▼──────────────────────────────────────┐
-│                    REACT FRONTEND (Vite + TypeScript)                │
+│                    REACT FRONTEND (Vite + TypeScript)               │
 │  ┌─────────────┐ ┌───────────────┐ ┌──────────────┐ ┌───────────┐ │
 │  │ ChatInterface│ │  Dashboard    │ │DocumentManager│ │ PolicyQA  │ │
 │  └─────────────┘ └───────────────┘ └──────────────┘ └───────────┘ │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │ HTTP REST API
 ┌──────────────────────────────▼──────────────────────────────────────┐
-│               FASTAPI BACKEND — http://localhost:8000                │
-│                                                                      │
+│               FASTAPI BACKEND — http://localhost:8000               │
+│                                                                     │
 │  POST /chat/query          GET /api/dashboard/stats                 │
 │  POST /admin/documents/*   GET /search/stats                        │
 │  POST /rag/ask             GET /health                              │
-│                                                                      │
+│                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │                   MULTI-AGENT PIPELINE                       │   │
 │  │                                                              │   │
@@ -108,29 +112,29 @@ Traditional chatbots hallucinate loan amounts, interest rates, and eligibility c
 │  │  │  NLU Agent  │──→ intent + entities                       │   │
 │  │  └──────┬──────┘                                            │   │
 │  │         │                                                    │   │
-│  │    ┌────▼──────────────────────────────────────────────┐    │   │
-│  │    │           Intent Router                            │    │   │
-│  │    │  emi_calculation → EMI Calculator (pure math)     │    │   │
-│  │    │  eligibility_check → Eligibility Agent (ML model) │    │   │
-│  │    │  max_loan_query  → Max Loan Calculator            │    │   │
-│  │    │  dti_query       → DTI Calculator                 │    │   │
-│  │    │  rejection_reason → RAG Pipeline                  │    │   │
-│  │    │  general_question → RAG Pipeline → Gemini QA      │    │   │
-│  │    └────────────────────────────────────────────────────┘   │   │
+│  │    ┌────▼──────────────────────────────────────────────┐     │   │
+│  │    │           Intent Router                           │     │   │
+│  │    │  emi_calculation → EMI Calculator (pure math)     │     │   │
+│  │    │  eligibility_check → Eligibility Agent (ML model) │     │   │
+│  │    │  max_loan_query  → Max Loan Calculator            │     │   │
+│  │    │  dti_query       → DTI Calculator                 │     │   │
+│  │    │  rejection_reason → RAG Pipeline                  │     │   │
+│  │    │  general_question → RAG Pipeline → Gemini QA      │     │   │
+│  │    └───────────────────────────────────────────────────┘     │   │
 │  │                                                              │   │
-│  │  ┌──────────────────────────────────────────────────────┐   │   │
-│  │  │                  RAG PIPELINE                        │   │   │
-│  │  │  Query → Gemini Embedding → FAISS Search             │   │   │
-│  │  │        → RAG Agent (Gemini) → Answer                 │   │   │
-│  │  │        → Validation Agent → Verified Answer          │   │   │
-│  │  └──────────────────────────────────────────────────────┘   │   │
+│  │  ┌──────────────────────────────────────────────────────┐    │   │
+│  │  │                  RAG PIPELINE                        │    │   │
+│  │  │  Query → Gemini Embedding → FAISS Search             │    │   │
+│  │  │        → RAG Agent (Gemini) → Answer                 │    │   │
+│  │  │        → Validation Agent → Verified Answer          │    │   │
+│  │  └──────────────────────────────────────────────────────┘    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
-│                                                                      │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────────────┐ │
-│  │  SQLite DB   │  │  FAISS Index  │  │  PDF Files (uploads/)    │ │
-│  │  (documents, │  │  (combined.   │  │  15 policy documents     │ │
-│  │   metadata)  │  │  faiss + json)│  │  87 indexed chunks       │ │
-│  └──────────────┘  └───────────────┘  └──────────────────────────┘ │
+│                                                                     │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────────────────┐│
+│  │  SQLite DB   │  │  FAISS Index  │  │  PDF Files (uploads/)    ││
+│  │  (documents, │  │  (combined.   │  │  15 policy documents     ││
+│  │   metadata)  │  │  faiss + json)│  │  87 indexed chunks       ││
+│  └──────────────┘  └───────────────┘  └──────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,6 +143,7 @@ Traditional chatbots hallucinate loan amounts, interest rates, and eligibility c
 ## 🛠️ Tech Stack
 
 ### Backend
+
 | Technology | Version | Purpose |
 |---|---|---|
 | **Python** | 3.13 | Core language |
@@ -153,6 +158,7 @@ Traditional chatbots hallucinate loan amounts, interest rates, and eligibility c
 | **python-dotenv** | Latest | Environment variable management |
 
 ### Frontend
+
 | Technology | Version | Purpose |
 |---|---|---|
 | **React** | 18 | UI framework |
@@ -169,6 +175,7 @@ Traditional chatbots hallucinate loan amounts, interest rates, and eligibility c
 The system uses **6 specialized AI agents**, each with a single responsibility:
 
 ### 1. 🧠 NLU Agent (`nlu_agent.py`)
+
 **Role**: Understand what the user is asking and extract key numbers.
 
 - Uses **Google Gemini** to classify intent and extract financial entities from natural language
@@ -178,13 +185,14 @@ The system uses **6 specialized AI agents**, each with a single responsibility:
 - Also handles **general loan knowledge Q&A** with topic-aware fallback answers covering 15 topics
 
 **Example:**
-```
+```text
 User: "I earn ₹60,000 — how much loan can I get?"
 → Intent: max_loan_query
 → Entities: { monthly_income: 60000, loan_amount: null }
 ```
 
 ### 2. ✅ Eligibility Agent (`eligibility_agent.py`)
+
 **Role**: Assess loan eligibility using ML + rule-based logic.
 
 - Runs a **scikit-learn ML model** (trained on synthetic Indian loan data) to predict risk probability
@@ -193,6 +201,7 @@ User: "I earn ₹60,000 — how much loan can I get?"
 - **Never uses AI** — fully deterministic and reproducible
 
 ### 3. 📚 RAG Agent (`rag_agent.py`)
+
 **Role**: Generate answers from retrieved policy document evidence.
 
 - Receives retrieved document chunks from FAISS vector search
@@ -203,6 +212,7 @@ User: "I earn ₹60,000 — how much loan can I get?"
 - Handles Gemini API errors gracefully without crashing
 
 ### 4. 🔍 Validation Agent (`validation_agent.py`)
+
 **Role**: Independently fact-check the RAG agent's answer.
 
 - Receives: question + proposed answer + original evidence chunks
@@ -212,6 +222,7 @@ User: "I earn ₹60,000 — how much loan can I get?"
 - Prevents factually wrong answers from reaching the user
 
 ### 5. 💡 Credit Improvement Agent (`credit_improvement_agent.py`)
+
 **Role**: Generate personalised credit improvement advice.
 
 - Called when a loan is rejected or conditionally approved
@@ -219,6 +230,7 @@ User: "I earn ₹60,000 — how much loan can I get?"
 - Generates actionable improvement steps with timeline estimates
 
 ### 6. 🤝 Empathy Agent (`empathy_agent.py`)
+
 **Role**: Add emotional context to responses for rejected applicants.
 
 - Wraps negative decisions with empathetic, encouraging language
@@ -232,7 +244,7 @@ The RAG (Retrieval-Augmented Generation) pipeline enables the chatbot to answer 
 
 ### How It Works — Step by Step
 
-```
+```text
 Step 1: UPLOAD
   Admin uploads a PDF → File saved to uploads/ directory
   → Document record created in SQLite with status "pending"
@@ -257,6 +269,7 @@ Step 3: QUERY (At chat time)
 ```
 
 ### Similarity Score Tuning
+
 - Gemini embeddings with FAISS dot-product produce scores in the **0.40–0.65 range** for relevant content
 - The threshold is set to **0.45** (was incorrectly 0.70 which filtered all results)
 - If no chunks meet the threshold, **best-effort RAG** uses top 3 chunks regardless of score
@@ -289,14 +302,14 @@ The system currently has **87 chunks across 15 documents** covering the complete
 
 ## 📁 Project Structure
 
-```
+```text
 AI-LOAN-ADVISORY-CHATBOT/
 │
 ├── README.md                          ← This file
 ├── .gitignore
 │
 ├── backend/                           ← FastAPI Python backend
-│   ├── .env                           ← Environment variables (GEMINI_API_KEY, etc.)
+│   ├── .env                           ← Environment variables
 │   ├── requirements.txt               ← Python dependencies
 │   ├── generate_pdfs.py               ← Script to generate seed PDF batch 1
 │   ├── generate_more_pdfs.py          ← Script to generate seed PDF batch 2
@@ -320,10 +333,10 @@ AI-LOAN-ADVISORY-CHATBOT/
 │       │   ├── validation_agent.py    ← Fact-checking agent for RAG answers
 │       │   ├── credit_improvement_agent.py ← Personalised credit advice
 │       │   ├── empathy_agent.py       ← Empathetic response wrapping
-│       │   └── orchestrator_agent.py  ← Legacy orchestrator (mostly replaced by main.py routing)
+│       │   └── orchestrator_agent.py  ← Legacy orchestrator
 │       │
 │       ├── services/
-│       │   ├── vector_store.py        ← FAISS index management (load, search, add, persist)
+│       │   ├── vector_store.py        ← FAISS index management
 │       │   ├── pdf_processor.py       ← PDF text extraction + chunking
 │       │   ├── emi_calculator.py      ← EMI, DTI, max loan calculations
 │       │   └── agent_logger.py        ← Logging utility
@@ -352,7 +365,7 @@ AI-LOAN-ADVISORY-CHATBOT/
 │       │
 │       └── components/
 │           ├── ChatInterface.tsx       ← Main chat UI, message send/receive
-│           ├── QueryResultCard.tsx    ← Renders different response types (EMI, eligibility, etc.)
+│           ├── QueryResultCard.tsx    ← Renders different response types
 │           ├── PolicyQA.tsx           ← Document Q&A interface
 │           ├── Dashboard.tsx          ← System stats dashboard
 │           ├── DocumentManager.tsx    ← Admin panel for PDF upload/management
@@ -380,6 +393,7 @@ AI-LOAN-ADVISORY-CHATBOT/
 | `GET` | `/health` | Health check with Gemini configuration status | None |
 
 **Request body for `/chat/query`:**
+
 ```json
 {
   "message": "I earn ₹60,000 — how much loan can I get?"
@@ -387,6 +401,7 @@ AI-LOAN-ADVISORY-CHATBOT/
 ```
 
 **Response types:**
+
 - `emi` — EMI calculation result
 - `eligibility` — Loan eligibility result with score and decision
 - `max_loan` — Maximum borrowable amount
@@ -422,6 +437,7 @@ AI-LOAN-ADVISORY-CHATBOT/
 ## ⚙️ Setup and Installation
 
 ### Prerequisites
+
 - Python 3.11 or 3.13
 - Node.js 18+
 - A **Google Gemini API key** (free at [aistudio.google.com](https://aistudio.google.com))
@@ -449,6 +465,7 @@ touch .env
 ```
 
 Add the following to your `.env` file:
+
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 ADMIN_SECRET_KEY=tata-mitra-admin-2024
@@ -480,7 +497,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 You should see:
-```
+
+```text
 INFO:     Application startup complete.
 VectorStore: loaded 87 chunks (87 vectors) from disk.
 INFO:     Uvicorn running on http://0.0.0.0:8000
@@ -494,7 +512,8 @@ npm run dev
 ```
 
 You should see:
-```
+
+```text
 VITE v5.4.8  ready in 202 ms
 ➜  Local:   http://localhost:5173/
 ```
@@ -508,6 +527,7 @@ Open your browser and go to: **http://localhost:5173**
 ## 📤 Adding New PDF Documents
 
 ### Method 1: Via Admin Panel (UI)
+
 1. Open the app at http://localhost:5173
 2. Click **Admin** in the navigation
 3. Enter the admin password: `tata-mitra-admin-2024`
@@ -516,6 +536,7 @@ Open your browser and go to: **http://localhost:5173**
 6. The document is now available for Q&A immediately
 
 ### Method 2: Via Script (Batch Upload)
+
 ```bash
 # First generate seed PDFs (if not already done)
 cd backend
@@ -530,6 +551,7 @@ python upload_seed2.py         # Uploads batch 2
 ```
 
 ### Method 3: Via API (curl)
+
 ```bash
 # Upload a PDF
 curl -X POST http://localhost:8000/admin/documents/upload \
@@ -558,7 +580,8 @@ curl -X POST http://localhost:8000/admin/documents/{doc_id}/process \
 ## 💬 How Each Question Type is Handled
 
 ### 1. "Calculate my EMI for ₹5 lakh loan at 12% for 3 years"
-```
+
+```text
 NLU → intent: emi_calculation
      → loan_amount: 500000, rate: 12.0, tenure: 36 months
 → EMI Calculator (pure math, no AI)
@@ -566,7 +589,8 @@ NLU → intent: emi_calculation
 ```
 
 ### 2. "I earn ₹60,000 — how much loan can I get?"
-```
+
+```text
 NLU → intent: max_loan_query
      → monthly_income: 60000, loan_amount: null
 → Max Loan Calculator
@@ -575,7 +599,8 @@ NLU → intent: max_loan_query
 ```
 
 ### 3. "Can I get a ₹5 lakh loan on ₹40,000 salary?"
-```
+
+```text
 NLU → intent: eligibility_check
      → monthly_income: 40000, loan_amount: 500000
 → Eligibility Agent (ML model)
@@ -583,7 +608,8 @@ NLU → intent: eligibility_check
 ```
 
 ### 4. "What credit score is required for a personal loan?"
-```
+
+```text
 NLU → intent: general_question
 → RAG Pipeline:
    - Embed question → FAISS search → top 5 chunks from CIBIL guide + loan policy
@@ -593,7 +619,8 @@ NLU → intent: general_question
 ```
 
 ### 5. "What is a gold loan?"
-```
+
+```text
 NLU → intent: general_question
 → RAG Pipeline → gold_loan_guide.pdf chunks retrieved
 → Answer: "A gold loan is a secured loan where you pledge gold jewellery...
@@ -601,7 +628,8 @@ NLU → intent: general_question
 ```
 
 ### 6. (When Gemini quota exhausted)
-```
+
+```text
 NLU → regex fallback detects intent from keywords
 → answer_general_question → Gemini fails → topic-aware static fallback
 → "Gold loan: secured loan, pledge jewellery, 75% LTV, 7-13% rate, no CIBIL needed..."
@@ -612,6 +640,7 @@ NLU → regex fallback detects intent from keywords
 ## 🎨 Frontend Pages and Components
 
 ### Chat Interface (`/`)
+
 - Main chat UI with gradient purple background
 - Sends messages to `/chat/query` API
 - Renders different card types based on response `type`:
@@ -623,11 +652,13 @@ NLU → regex fallback detects intent from keywords
   - **Missing Info Card**: Prompt for more details
 
 ### Dashboard (`/dashboard`)
+
 - Live system statistics
 - Total documents, total chunks, index status
 - API health indicator
 
 ### Admin Panel (`/admin`)
+
 - Password-protected admin interface
 - Upload new PDF documents (drag & drop or file picker)
 - Process documents (embed into vector store)
@@ -635,6 +666,7 @@ NLU → regex fallback detects intent from keywords
 - Delete documents (removes from vector store + database)
 
 ### Policy Q&A (`/policy`)
+
 - Dedicated interface for document-specific questions
 - Shows source citations prominently
 
@@ -645,6 +677,7 @@ NLU → regex fallback detects intent from keywords
 The eligibility agent uses a **scikit-learn RandomForestClassifier** (or LogisticRegression) trained on synthetic Indian loan data.
 
 ### Training Features
+
 - Monthly income
 - Loan amount requested
 - Loan tenure
@@ -653,10 +686,12 @@ The eligibility agent uses a **scikit-learn RandomForestClassifier** (or Logisti
 - Loan-to-income ratio (computed)
 
 ### Training Labels
+
 - `1` = approved (low risk)
 - `0` = rejected (high risk)
 
 ### Training Script
+
 ```bash
 cd backend
 source venv/bin/activate
@@ -665,9 +700,11 @@ python app/ml/train_model.py
 ```
 
 ### Eligibility Score Formula
-```
+
+```text
 Score = (100 - risk_probability * 100) * DTI_adjustment * income_adjustment
 ```
+
 - DTI < 30%: +bonus points
 - DTI 30-50%: standard scoring
 - DTI > 50%: penalised → often REJECTED
@@ -691,6 +728,7 @@ Score = (100 - risk_probability * 100) * DTI_adjustment * income_adjustment
 ## 📊 Sample API Responses
 
 ### EMI Calculation Response
+
 ```json
 {
   "type": "emi",
@@ -707,6 +745,7 @@ Score = (100 - risk_probability * 100) * DTI_adjustment * income_adjustment
 ```
 
 ### Eligibility Response
+
 ```json
 {
   "type": "eligibility",
@@ -722,6 +761,7 @@ Score = (100 - risk_probability * 100) * DTI_adjustment * income_adjustment
 ```
 
 ### Policy Q&A Response
+
 ```json
 {
   "type": "policy",
@@ -746,20 +786,25 @@ Score = (100 - risk_probability * 100) * DTI_adjustment * income_adjustment
 ## 👨‍💻 Development Notes
 
 ### Adding a New Intent
+
 1. Add the intent name and examples to `_INTENT_PROMPT` in `nlu_agent.py`
 2. Add keyword patterns to `_regex_fallback()` in `nlu_agent.py`
 3. Add a handler block in `main.py` (follow the pattern of existing intents)
 4. Add a response card component in `QueryResultCard.tsx` if needed
 
 ### Adding New Topic Fallback Answers
+
 In `nlu_agent.py`, find `answer_general_question()` and add a new `elif` block in the fallback section:
+
 ```python
 elif any(w in m for w in ["your", "topic", "keywords"]):
     return "Your informative answer here..."
 ```
 
 ### Re-indexing All Documents
+
 If you need to rebuild the vector store from scratch:
+
 ```bash
 rm backend/vector_store/combined.faiss
 rm backend/vector_store/combined.json
@@ -797,7 +842,3 @@ curl -X POST http://localhost:8000/chat/query \
 ## 📝 License
 
 This project is built for educational and demonstration purposes as part of the Celebal Technologies internship program.
-
----
-#   A I _ L O A N _ A D V I S O R Y  
- 
