@@ -1,0 +1,29 @@
+# ── Web Framework ─────────────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.12   # required for file uploads
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# ── Google Gemini AI ──────────────────────────────────────────────────────────
+google-genai>=2.0.0          # primary SDK used (google.genai)
+google-generativeai>=0.8.0   # legacy SDK (embeddings)
+
+# ── Vector Search (RAG) ───────────────────────────────────────────────────────
+faiss-cpu>=1.7.4             # local FAISS vector index (no server required)
+numpy>=1.24.0
+
+# ── PDF Processing ────────────────────────────────────────────────────────────
+pymupdf>=1.23.0              # PyMuPDF — page-by-page text extraction
+
+# ── ML Eligibility Model ─────────────────────────────────────────────────────
+scikit-learn>=1.3.0          # Random Forest / gradient boosting for risk scoring
+pandas>=2.0.0
+joblib>=1.3.0                # model serialisation / deserialisation
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+pillow>=10.0.0               # image processing (PDF page rendering)
+httpx>=0.26.0                # async HTTP client
