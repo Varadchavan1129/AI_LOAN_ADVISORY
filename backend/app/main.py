@@ -119,6 +119,15 @@ def health_check():
 def apply_loan(data: LoanInput):
     return OrchestratorAgent.process_loan_application(data)
 
+@app.post("/api/financial-profile/assess")
+def assess_financial_profile(data: LoanInput):
+    """
+    Direct financial profile assessment endpoint (Phase 1).
+    Accepts structured profile fields, computes deterministic metrics & affordability,
+    evaluates ML risk model, persists profile and returns detailed assessment.
+    """
+    return OrchestratorAgent.process_loan_application(data)
+
 @app.get("/api/dashboard/stats")
 def get_dashboard_stats():
     db = SessionLocal()
@@ -269,9 +278,58 @@ def handle_natural_query(data: QueryRequest):
     ent    = nlu.get("entities", {})
 
     # ------------------------------------------------------------------
+    # FINANCIAL PROFILE ASSESSMENT (PHASE 1)
+    # ------------------------------------------------------------------
+    if intent == "financial_profile_assessment" or (intent == "eligibility_check" and ent.get("monthly_income") and ent.get("loan_amount")):
+        monthly_income  = ent.get("monthly_income")
+        loan_amount     = ent.get("loan_amount")
+        existing_emi    = ent.get("existing_emi") or 0.0
+        tenure_months   = ent.get("tenure_months") or _DEFAULT_TENURE
+        interest_rate   = ent.get("interest_rate") or _DEFAULT_RATE
+        credit_score    = ent.get("credit_score") or 750
+        age             = ent.get("age") or 30
+        employment_type = ent.get("employment_type") or "salaried"
+        loan_purpose    = ent.get("loan_purpose") or "personal"
+
+        missing = []
+        if not monthly_income: missing.append("monthly income (e.g. ₹60,000)")
+        if not loan_amount:    missing.append("loan amount (e.g. ₹5 lakh)")
+
+        if missing:
+            return {
+                "type":    "missing_info",
+                "message": f"To assess your financial profile and loan eligibility, please provide your {', '.join(missing)}.",
+                "data":    {"missing": missing},
+            }
+
+        loan_input = LoanInput(
+            monthly_income=monthly_income,
+            existing_emi=existing_emi,
+            loan_amount=loan_amount,
+            tenure_months=tenure_months,
+            employment_type=employment_type,
+            age=age,
+            credit_score=credit_score,
+            loan_purpose=loan_purpose,
+            annual_rate=interest_rate,
+        )
+
+        orch_res = OrchestratorAgent.process_loan_application(loan_input)
+
+        return {
+            "type":    "assessment",
+            "message": orch_res.get("message", ""),
+            "title":   orch_res.get("title", "Financial Profile Assessment"),
+            "status":  orch_res.get("status", "conditional"),
+            "data":    orch_res.get("assessment"),
+            "profile": orch_res.get("profile"),
+            "advice":  orch_res.get("personalized_improvement_advice"),
+        }
+
+    # ------------------------------------------------------------------
     # EMI CALCULATION
     # ------------------------------------------------------------------
-    if intent == "emi_calculation":
+    elif intent == "emi_calculation":
         loan_amount   = ent.get("loan_amount")
         tenure_months = ent.get("tenure_months") or _DEFAULT_TENURE
         interest_rate = ent.get("interest_rate") or _DEFAULT_RATE
@@ -312,7 +370,7 @@ def handle_natural_query(data: QueryRequest):
         }
 
     # ------------------------------------------------------------------
-    # ELIGIBILITY CHECK
+    # ELIGIBILITY CHECK (FALLBACK / BASIC)
     # ------------------------------------------------------------------
     elif intent == "eligibility_check":
         monthly_income = ent.get("monthly_income")
@@ -339,16 +397,22 @@ def handle_natural_query(data: QueryRequest):
         )
         eligibility = EligibilityAgent.evaluate(loan_input)
 
-        decision_emoji = {"approved": "✅", "conditional": "⚠️", "rejected": "❌"}
+        decision_emoji = {"likely_eligible": "✅", "review_needed": "⚠️", "unlikely_eligible": "❌"}
+        decision_display = {
+            "likely_eligible": "POTENTIALLY ELIGIBLE",
+            "review_needed": "REVIEW NEEDED",
+            "unlikely_eligible": "UNLIKELY ELIGIBLE",
+        }
         return {
             "type": "eligibility",
             "message": (
                 f"{decision_emoji.get(eligibility.decision, '')} "
-                f"Your loan is **{eligibility.decision.upper()}** — "
-                f"Eligibility Score: {eligibility.eligibility_score}/100, "
+                f"Estimated eligibility: **{decision_display.get(eligibility.decision, eligibility.decision.upper())}** — "
+                f"Assessment Score: {eligibility.eligibility_score}/100, "
                 f"DTI Ratio: {eligibility.dti_ratio:.0%}, "
-                f"Risk: {eligibility.risk_probability:.0%}."
-                + (f" Reason: {eligibility.reason}." if eligibility.reason else "")
+                f"Risk Estimate: {eligibility.risk_probability:.0%}."
+                + (f" Observations: {eligibility.reason}." if eligibility.reason else "")
+                + " Final eligibility is determined by the lender."
             ),
             "data": {
                 "decision":         eligibility.decision,

@@ -2,12 +2,27 @@ import { motion } from 'framer-motion';
 import { CheckCircle, AlertCircle, Info } from 'lucide-react';
 import { LoanResult } from '../types';
 import { ImprovementPlan } from './ImprovementPlan';
+import { FinancialAssessmentCard } from './FinancialAssessmentCard';
 
 interface ResultCardProps {
   result: LoanResult;
 }
 
 export const ResultCard = ({ result }: ResultCardProps) => {
+  if (result.assessment) {
+    return (
+      <div className="w-full">
+        <FinancialAssessmentCard
+          data={result.assessment}
+          title={result.title}
+          message={result.message}
+          advice={result.advice}
+          profile={result.profile}
+        />
+      </div>
+    );
+  }
+
   const getStatusConfig = () => {
     switch (result.status) {
       case 'approved':

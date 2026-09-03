@@ -2,37 +2,48 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Send, MessageCircle, ClipboardList, ArrowLeft, Sparkles,
-  Loader, BookOpen, Calculator, ShieldCheck,
+  Loader, BookOpen, Calculator, ShieldCheck, UserCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Message, Step, LoanData, LoanResult, ChatMode, QueryResult } from '../types';
+import { Message, Step, StructuredLoanData, LoanResult, ChatMode, QueryResult } from '../types';
 import { MessageList } from './MessageList';
 import { QueryResultCard } from './QueryResultCard';
 
-// ── Wizard step questions ────────────────────────────────────────────────────
-const STEP_QUESTIONS: Record<string, string> = {
-  income:  'What is your monthly income? (in ₹)',
-  emi:     'What is your existing monthly EMI? (₹0 if none)',
-  amount:  'How much loan amount do you need? (in ₹)',
-  tenure:  'What loan tenure are you looking for? (in months, e.g. 60)',
+// ── Structured Wizard Step Questions ─────────────────────────────────────────
+const STEP_QUESTIONS: Record<Step, string> = {
+  income:      'What is your monthly net income? (in ₹, e.g. 60000)',
+  employment:  'What is your employment type? (e.g. Salaried, Self-Employed, Business)',
+  age:         'What is your age in years? (e.g. 30)',
+  cibil:       'What is your CIBIL / credit score? (300-900, e.g. 750)',
+  emi:         'What is your existing total monthly EMI? (₹0 if none)',
+  amount:      'How much loan amount do you need? (in ₹, e.g. 500000)',
+  tenure:      'What loan tenure are you looking for? (in months, e.g. 36 or 60)',
+  purpose:     'What is the purpose of this loan? (e.g. Personal, Home Renovation, Education, Business)',
+  processing:  'Processing your financial profile assessment…',
+  done:        'Assessment complete!',
 };
 
-// ── Suggested NL prompts (includes policy questions) ─────────────────────────
-const SUGGESTIONS = [
-  'What EMI for ₹5 lakh at 10% for 5 years?',
-  'I earn ₹60,000 — how much loan can I get?',
-  'What credit score is required for a personal loan?',
-  'Am I eligible: ₹50,000 income, ₹5,000 EMI, ₹3 lakh loan?',
-  'What is the maximum DTI ratio allowed?',
-  'What documents are needed to apply for a loan?',
-  'What happens if my loan is rejected?',
+const STEP_ORDER: Step[] = [
+  'income',
+  'employment',
+  'age',
+  'cibil',
+  'emi',
+  'amount',
+  'tenure',
+  'purpose',
+  'processing',
+  'done',
 ];
 
-// ── Loading step labels for the typing indicator ──────────────────────────────
-const LOADING_HINTS = [
-  { icon: Loader,       label: 'Thinking…' },
-  { icon: BookOpen,     label: 'Searching policy documents…' },
-  { icon: ShieldCheck,  label: 'Verifying answer…' },
+// ── Suggested NL Prompts ─────────────────────────────────────────────────────
+const SUGGESTIONS = [
+  'I earn ₹60,000, have an ₹8,000 EMI, CIBIL 750 and need ₹5 lakh for 3 years.',
+  'I make ₹85,000 as salaried, age 32, CIBIL 780, need ₹10 lakh for home renovation.',
+  'What EMI for ₹5 lakh at 10.5% for 5 years?',
+  'I earn ₹50,000 with ₹10,000 existing EMI — how much loan can I get?',
+  'What credit score is required for a personal loan?',
+  'What is the maximum DTI / FOIR ratio allowed?',
 ];
 
 // ── Small inline chat components ─────────────────────────────────────────────
@@ -43,7 +54,7 @@ function BotBubble({ text }: { text: string }) {
         <Sparkles className="w-4 h-4 text-indigo-300" />
       </div>
       <div className="max-w-[85%] bg-white/10 border border-white/15 rounded-2xl rounded-tl-none px-4 py-3">
-        <p className="text-sm text-white/90 leading-relaxed">{text}</p>
+        <p className="text-sm text-white/90 leading-relaxed whitespace-pre-wrap">{text}</p>
       </div>
     </div>
   );
@@ -98,7 +109,16 @@ export const ChatInterface = () => {
   // ── Wizard state ──────────────────────────────────────────────────────────
   const [wizardMessages, setWizardMessages] = useState<Message[]>([]);
   const [currentStep, setCurrentStep]       = useState<Step>('income');
-  const [loanData, setLoanData]             = useState<LoanData>({ income: '', emi: '', amount: '', tenure: '' });
+  const [loanData, setLoanData]             = useState<StructuredLoanData>({
+    income: '',
+    employment: 'Salaried',
+    age: '30',
+    cibil: '750',
+    emi: '0',
+    amount: '',
+    tenure: '60',
+    purpose: 'Personal',
+  });
 
   // Scroll to bottom whenever messages change
   useEffect(() => {
@@ -114,7 +134,7 @@ export const ChatInterface = () => {
       setChatMessages([{
         id: 'c1',
         type: 'bot',
-        content: "Hi! I'm Tata Mitra 👋 Ask me anything about loans — eligibility, EMI, DTI, max loan amount, policy rules, and more.",
+        content: "Hi! I'm Tata Mitra, your AI Loan Advisor 👋 You can ask any question or share your financial profile (e.g., 'I earn ₹60,000, have an ₹8,000 EMI, CIBIL 750 and need ₹5 lakh for 3 years') for an instant affordability assessment!",
         timestamp: new Date(),
       }]);
     } else if (mode === 'apply') {
@@ -122,7 +142,7 @@ export const ChatInterface = () => {
         {
           id: 'w1',
           type: 'bot',
-          content: "Let's check your loan eligibility! I'll ask you 4 quick questions.",
+          content: "Welcome to the Structured Financial Profile Assessment! Let's evaluate your eligibility and EMI capacity across 8 quick questions.",
           timestamp: new Date(),
         },
         {
@@ -133,7 +153,16 @@ export const ChatInterface = () => {
         },
       ]);
       setCurrentStep('income');
-      setLoanData({ income: '', emi: '', amount: '', tenure: '' });
+      setLoanData({
+        income: '',
+        employment: 'Salaried',
+        age: '30',
+        cibil: '750',
+        emi: '0',
+        amount: '',
+        tenure: '60',
+        purpose: 'Personal',
+      });
     }
   }, [mode]);
 
@@ -147,15 +176,13 @@ export const ChatInterface = () => {
   // ── Start loading with progressive hints ─────────────────────────────────
   const startLoading = () => {
     setLoading(true);
-    setHint('Thinking…');
-    // After 1.5s hint: searching policy docs
+    setHint('Evaluating financial profile…');
     hintTimerRef.current = setTimeout(() => {
-      setHint('Searching policy documents…');
-      // After another 2s hint: verifying
+      setHint('Calculating deterministic EMI & FOIR metrics…');
       hintTimerRef.current = setTimeout(() => {
-        setHint('Verifying answer…');
-      }, 2000);
-    }, 1500);
+        setHint('Running risk analysis & policy rules…');
+      }, 1500);
+    }, 1200);
   };
 
   const stopLoading = () => {
@@ -218,17 +245,21 @@ export const ChatInterface = () => {
   };
 
   // ── Wizard: process final submission ──────────────────────────────────────
-  const processLoanApplication = async (data: LoanData) => {
+  const processLoanApplication = async (data: StructuredLoanData) => {
     startLoading();
     try {
-      const res = await fetch('/chat/apply-loan', {
+      const res = await fetch('/api/financial-profile/assess', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          monthly_income: parseFloat(data.income),
-          existing_emi:   parseFloat(data.emi),
-          loan_amount:    parseFloat(data.amount),
-          tenure_months:  parseInt(data.tenure),
+          monthly_income:  parseFloat(data.income) || 0,
+          existing_emi:    parseFloat(data.emi) || 0,
+          loan_amount:     parseFloat(data.amount) || 0,
+          tenure_months:   parseInt(data.tenure) || 60,
+          employment_type: data.employment || 'salaried',
+          age:             parseInt(data.age) || 30,
+          credit_score:    parseInt(data.cibil) || 750,
+          loan_purpose:    data.purpose || 'personal',
         }),
       });
 
@@ -236,10 +267,12 @@ export const ChatInterface = () => {
 
       const resp = await res.json();
       const result: LoanResult = {
-        status:  resp.status,
-        title:   resp.title,
-        message: resp.message,
-        advice:  resp.personalized_improvement_advice,
+        status:     resp.status,
+        title:      resp.title,
+        message:    resp.message,
+        advice:     resp.personalized_improvement_advice,
+        assessment: resp.assessment,
+        profile:    resp.profile,
       };
 
       setWizardMessages(prev => [...prev, {
@@ -258,7 +291,6 @@ export const ChatInterface = () => {
         timestamp: new Date(),
       }]);
       setCurrentStep('income');
-      setLoanData({ income: '', emi: '', amount: '', tenure: '' });
     } finally {
       stopLoading();
     }
@@ -269,14 +301,18 @@ export const ChatInterface = () => {
     const text = input.trim();
     if (!text || isLoading || currentStep === 'done') return;
 
-    if (!isFinite(parseFloat(text)) || parseFloat(text) < 0) {
-      setWizardMessages(prev => [...prev, {
-        id:        Date.now().toString(),
-        type:      'bot',
-        content:   'Please enter a valid number (0 or more).',
-        timestamp: new Date(),
-      }]);
-      return;
+    // Numeric validations for numeric steps
+    if (['income', 'age', 'cibil', 'emi', 'amount', 'tenure'].includes(currentStep)) {
+      const num = parseFloat(text);
+      if (!isFinite(num) || num < 0) {
+        setWizardMessages(prev => [...prev, {
+          id:        Date.now().toString(),
+          type:      'bot',
+          content:   'Please enter a valid positive number.',
+          timestamp: new Date(),
+        }]);
+        return;
+      }
     }
 
     setWizardMessages(prev => [...prev, {
@@ -287,8 +323,8 @@ export const ChatInterface = () => {
     const updated = { ...loanData, [currentStep]: text };
     setLoanData(updated);
 
-    const order: Step[] = ['income', 'emi', 'amount', 'tenure', 'processing', 'done'];
-    const next = order[order.indexOf(currentStep) + 1];
+    const nextIndex = STEP_ORDER.indexOf(currentStep) + 1;
+    const next = STEP_ORDER[nextIndex];
 
     if (next === 'processing') {
       setCurrentStep('processing');
@@ -302,7 +338,7 @@ export const ChatInterface = () => {
           timestamp: new Date(),
         }]);
         setCurrentStep(next);
-      }, 400);
+      }, 350);
     }
   };
 
@@ -326,11 +362,13 @@ export const ChatInterface = () => {
         {msg.type === 'query_result' && msg.queryResult && (
           <div className="flex gap-2 items-start">
             <div className="w-8 h-8 rounded-full bg-indigo-500/30 flex items-center justify-center flex-shrink-0 mt-1">
-              {msg.queryResult.type === 'policy'
-                ? <BookOpen   className="w-4 h-4 text-teal-300" />
-                : msg.queryResult.type === 'emi'
-                  ? <Calculator className="w-4 h-4 text-indigo-300" />
-                  : <Sparkles   className="w-4 h-4 text-indigo-300" />
+              {msg.queryResult.type === 'assessment'
+                ? <UserCheck  className="w-4 h-4 text-emerald-300" />
+                : msg.queryResult.type === 'policy'
+                  ? <BookOpen   className="w-4 h-4 text-teal-300" />
+                  : msg.queryResult.type === 'emi'
+                    ? <Calculator className="w-4 h-4 text-indigo-300" />
+                    : <Sparkles   className="w-4 h-4 text-indigo-300" />
               }
             </div>
             <div className="flex-1">
@@ -358,7 +396,7 @@ export const ChatInterface = () => {
               <Sparkles className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-4xl font-bold text-white mb-2">Tata Mitra</h1>
-            <p className="text-white/60">Your AI Loan Advisor</p>
+            <p className="text-white/60">Your AI Financial Profile &amp; Loan Advisor</p>
           </div>
 
           {/* Mode cards */}
@@ -374,8 +412,8 @@ export const ChatInterface = () => {
                   <MessageCircle className="w-6 h-6 text-indigo-200" />
                 </div>
                 <div>
-                  <h2 className="text-white font-semibold text-lg">Ask a Question</h2>
-                  <p className="text-white/50 text-sm">EMI, eligibility, DTI, policy rules &amp; more</p>
+                  <h2 className="text-white font-semibold text-lg">Chat &amp; Profile Assessment</h2>
+                  <p className="text-white/50 text-sm">Ask questions or share financial numbers in natural language</p>
                 </div>
               </div>
             </motion.button>
@@ -391,8 +429,8 @@ export const ChatInterface = () => {
                   <ClipboardList className="w-6 h-6 text-purple-200" />
                 </div>
                 <div>
-                  <h2 className="text-white font-semibold text-lg">Apply for a Loan</h2>
-                  <p className="text-white/50 text-sm">Full eligibility check with AI analysis</p>
+                  <h2 className="text-white font-semibold text-lg">Structured Assessment Wizard</h2>
+                  <p className="text-white/50 text-sm">Step-by-step 8-point financial profile analysis</p>
                 </div>
               </div>
             </motion.button>
@@ -400,13 +438,13 @@ export const ChatInterface = () => {
 
           {/* Suggestion chips */}
           <div className="mt-8">
-            <p className="text-white/30 text-xs mb-3">Try asking:</p>
+            <p className="text-white/30 text-xs mb-3">Try asking in natural language:</p>
             <div className="flex flex-wrap gap-2 justify-center">
-              {SUGGESTIONS.map(s => (
+              {SUGGESTIONS.slice(0, 3).map(s => (
                 <button
                   key={s}
                   onClick={() => { setMode('chat'); setTimeout(() => handleChatSend(s), 300); }}
-                  className="text-xs bg-white/10 hover:bg-white/20 border border-white/15 rounded-full px-3 py-1.5 text-white/70 hover:text-white transition-all"
+                  className="text-xs bg-white/10 hover:bg-white/20 border border-white/15 rounded-full px-3 py-1.5 text-white/70 hover:text-white transition-all text-left"
                 >
                   {s}
                 </button>
@@ -416,7 +454,7 @@ export const ChatInterface = () => {
 
           <div className="mt-8">
             <Link to="/admin" className="text-xs text-white/25 hover:text-white/50 transition-colors">
-              Employee Login
+              Employee / Admin Portal
             </Link>
           </div>
         </motion.div>
@@ -429,7 +467,7 @@ export const ChatInterface = () => {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-600 via-purple-600 to-indigo-800 p-4 md:p-8">
-      <div className="max-w-2xl mx-auto h-[92vh] flex flex-col">
+      <div className="max-w-3xl mx-auto h-[92vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">
@@ -445,13 +483,12 @@ export const ChatInterface = () => {
               : <ClipboardList className="w-5 h-5 text-purple-200" />
             }
             <h1 className="text-lg font-semibold text-white">
-              {mode === 'chat' ? 'Ask Tata Mitra' : 'Loan Application'}
+              {mode === 'chat' ? 'Tata Mitra Loan Advisor' : 'Structured Financial Assessment'}
             </h1>
           </div>
-          {/* Subtle indicator: policy answers are document-grounded */}
-          {mode === 'chat' && (
-            <span className="ml-auto flex items-center gap-1.5 text-xs text-white/30 border border-white/10 rounded-full px-2.5 py-1">
-              <BookOpen className="w-3 h-3" /> Policy answers sourced from documents
+          {mode === 'apply' && (
+            <span className="ml-auto text-xs text-white/50 border border-white/15 rounded-full px-3 py-1 bg-white/5">
+              Step {Math.min(STEP_ORDER.indexOf(currentStep) + 1, 8)} of 8
             </span>
           )}
         </div>
@@ -489,11 +526,11 @@ export const ChatInterface = () => {
             {/* Suggestion chips — only in chat mode when few messages */}
             {mode === 'chat' && chatMessages.length <= 1 && (
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {SUGGESTIONS.slice(0, 4).map(s => (
+                {SUGGESTIONS.map(s => (
                   <button
                     key={s}
                     onClick={() => handleChatSend(s)}
-                    className="text-xs bg-white/10 hover:bg-white/20 border border-white/15 rounded-full px-3 py-1 text-white/60 hover:text-white transition-all"
+                    className="text-xs bg-white/10 hover:bg-white/20 border border-white/15 rounded-full px-3 py-1 text-white/60 hover:text-white transition-all text-left"
                   >
                     {s}
                   </button>
@@ -510,10 +547,10 @@ export const ChatInterface = () => {
                 disabled={inputDisabled}
                 placeholder={
                   inputDisabled
-                    ? (currentStep === 'done' ? 'Application complete' : 'Processing…')
+                    ? (currentStep === 'done' ? 'Assessment complete' : 'Evaluating…')
                     : mode === 'chat'
-                      ? 'Ask anything about loans or policy…'
-                      : 'Enter your answer…'
+                      ? 'Ask anything or share your financial profile…'
+                      : `Enter ${currentStep}…`
                 }
                 className="flex-1 px-4 py-3 rounded-xl bg-white/10 backdrop-blur-lg border border-white/20 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
               />

@@ -4,7 +4,8 @@ import {
   TrendingUp, Info, HelpCircle, IndianRupee,
   FileText, ShieldCheck, ShieldAlert, BookOpen,
 } from 'lucide-react';
-import type { QueryResult, EMIData, EligibilityData, MaxLoanData, DTIData, RAGData, RAGSource } from '../types';
+import type { QueryResult, EMIData, EligibilityData, MaxLoanData, DTIData, RAGData, FinancialAssessmentData } from '../types';
+import { FinancialAssessmentCard } from './FinancialAssessmentCard';
 
 interface Props {
   result: QueryResult;
@@ -247,7 +248,6 @@ function GeneralCard({ message }: { message: string }) {
 function PolicyCard({ data }: { data: RAGData }) {
   return (
     <div className="space-y-3">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <div className="w-8 h-8 rounded-full bg-teal-500/20 flex items-center justify-center">
           <BookOpen className="w-4 h-4 text-teal-300" />
@@ -255,7 +255,6 @@ function PolicyCard({ data }: { data: RAGData }) {
         <span className="text-sm font-semibold text-white/80">Policy Answer</span>
       </div>
 
-      {/* Answer text */}
       <div className="rounded-2xl p-4 border bg-teal-950/40 border-teal-800/40">
         <p className="text-sm text-white/90 leading-relaxed whitespace-pre-wrap">{data.answer}</p>
       </div>
@@ -265,6 +264,18 @@ function PolicyCard({ data }: { data: RAGData }) {
 
 // ─── Root Export ─────────────────────────────────────────────────────────────
 export const QueryResultCard = ({ result }: Props) => {
+  if (result.type === 'assessment' && result.data) {
+    return (
+      <FinancialAssessmentCard
+        data={result.data as FinancialAssessmentData}
+        title={result.title}
+        message={result.message}
+        advice={result.advice}
+        profile={result.profile}
+      />
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
