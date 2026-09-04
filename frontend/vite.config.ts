@@ -4,31 +4,19 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Expose REACT_APP_* env vars (in addition to VITE_*) to the client.
+  envPrefix: ['VITE_', 'REACT_APP_'],
   server: {
-    proxy: {
-      '/chat': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      '/api': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      '/admin/documents': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      '/search': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
-      '/rag': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-      },
+    host: '0.0.0.0',
+    port: 3000,
+    strictPort: true,
+    allowedHosts: true,
+    hmr: {
+      clientPort: 443,
+      protocol: 'wss',
     },
   },
   optimizeDeps: {
-    exclude: ['lucide-react'],
+    include: ['lucide-react', 'react-is'],
   },
 });

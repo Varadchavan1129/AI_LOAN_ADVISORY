@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { LogOut, LayoutDashboard, Users, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { API } from '../api';
 
 interface DashboardStats {
     summary: {
@@ -35,7 +36,7 @@ export const Dashboard = () => {
         // Fetch stats
         const fetchStats = async () => {
             try {
-                const res = await fetch('/api/dashboard/stats');
+                const res = await fetch(`${API}/dashboard/stats`);
                 const data = await res.json();
                 setStats(data);
             } catch (err) {

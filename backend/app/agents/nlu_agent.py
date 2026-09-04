@@ -18,6 +18,7 @@ import json
 
 from google import genai
 from google.genai import types
+from app.services import llm_text
 
 MODEL = "models/gemini-flash-latest"
 
@@ -77,26 +78,13 @@ Respond with ONLY valid JSON:
 
 
 def parse_intent(message: str) -> dict:
-    """Detect intent and extract financial entities using Gemini, with regex fallback."""
-    client = _get_genai_client()
-    if not client:
+    """Detect intent and extract financial entities via LLM, with regex fallback."""
+    result = llm_text.complete_json(_INTENT_PROMPT.format(message=message))
+    if not result or "intent" not in result:
         return _regex_fallback(message)
-
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=_INTENT_PROMPT.format(message=message),
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            ),
-        )
-        result = json.loads(response.text)
-        if "entities" not in result:
-            result["entities"] = _empty_entities()
-        return result
-    except Exception as e:
-        print(f"NLUAgent parse_intent error: {e}")
-        return _regex_fallback(message)
+    if "entities" not in result:
+        result["entities"] = _empty_entities()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -123,20 +111,11 @@ Answer:"""
 
 
 def answer_general_question(message: str) -> str:
-    """Use Gemini to answer general loan knowledge questions."""
-    client = _get_genai_client()
-    if not client:
-        return _fallback_general_answer(message)
-
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=_GENERAL_QA_PROMPT.format(message=message),
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"NLUAgent answer_general_question error: {e}")
-        return _fallback_general_answer(message)
+    """Use the LLM to answer general loan knowledge questions."""
+    answer = llm_text.complete(_GENERAL_QA_PROMPT.format(message=message))
+    if answer:
+        return answer
+    return _fallback_general_answer(message)
 
 
 def _fallback_general_answer(message: str) -> str:

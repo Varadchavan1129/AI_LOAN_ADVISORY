@@ -1,3 +1,7 @@
+import os
+from google import genai
+from app.services import llm_text
+
 MODEL = "gemini-flash-lite-latest"
 
 def _get_genai_client():
@@ -89,16 +93,7 @@ Write a warm, supportive, and actionable advisory paragraph (1-2 natural paragra
 4. Tone: Encouraging, constructive, professional. Do not use bullet points or tables.
 """
 
-        client = _get_genai_client()
-        if not client:
-            return "To enhance your loan eligibility, we recommend reducing existing short-term debt to lower your FOIR below 40%, considering a longer repayment tenure to decrease your monthly EMI, and consistently paying credit dues on time to boost your CIBIL score."
-
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            print(f"CreditImprovementAgent Error: {e}")
-            return "To enhance your loan eligibility, we recommend reducing existing short-term debt to lower your FOIR below 40%, considering a longer repayment tenure to decrease your monthly EMI, and consistently paying credit dues on time to boost your CIBIL score."
+        advice = llm_text.complete(prompt)
+        if advice:
+            return advice
+        return "To enhance your loan eligibility, we recommend reducing existing short-term debt to lower your FOIR below 40%, considering a longer repayment tenure to decrease your monthly EMI, and consistently paying credit dues on time to boost your CIBIL score."

@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Message, Step, StructuredLoanData, LoanResult, ChatMode, QueryResult } from '../types';
 import { MessageList } from './MessageList';
 import { QueryResultCard } from './QueryResultCard';
+import { API } from '../api';
 
 // ── Structured Wizard Step Questions ─────────────────────────────────────────
 const STEP_QUESTIONS: Record<Step, string> = {
@@ -98,6 +99,7 @@ export const ChatInterface = () => {
   // ── Shared state ──────────────────────────────────────────────────────────
   const [mode, setMode]         = useState<ChatMode>('select');
   const [input, setInput]       = useState('');
+  const [language, setLanguage] = useState<'en' | 'hi' | 'mr'>('en');
   const [isLoading, setLoading] = useState(false);
   const [loadingHint, setHint]  = useState('Thinking…');
   const bottomRef               = useRef<HTMLDivElement>(null);
@@ -210,10 +212,10 @@ export const ChatInterface = () => {
     startLoading();
 
     try {
-      const res = await fetch('/chat/query', {
+      const res = await fetch(`${API}/chat/query`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ message: text }),
+        body:    JSON.stringify({ message: text, language }),
       });
 
       if (!res.ok) {
@@ -248,7 +250,7 @@ export const ChatInterface = () => {
   const processLoanApplication = async (data: StructuredLoanData) => {
     startLoading();
     try {
-      const res = await fetch('/api/financial-profile/assess', {
+      const res = await fetch(`${API}/financial-profile/assess`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -490,6 +492,19 @@ export const ChatInterface = () => {
             <span className="ml-auto text-xs text-white/50 border border-white/15 rounded-full px-3 py-1 bg-white/5">
               Step {Math.min(STEP_ORDER.indexOf(currentStep) + 1, 8)} of 8
             </span>
+          )}
+          {mode === 'chat' && (
+            <select
+              data-testid="language-selector"
+              value={language}
+              onChange={e => setLanguage(e.target.value as 'en' | 'hi' | 'mr')}
+              className="ml-auto text-xs bg-white/10 border border-white/20 rounded-full px-3 py-1.5 text-white/80 focus:outline-none focus:ring-2 focus:ring-white/30 cursor-pointer [&>option]:text-gray-900"
+              title="Response language"
+            >
+              <option value="en">English</option>
+              <option value="hi">हिंदी (Hindi)</option>
+              <option value="mr">मराठी (Marathi)</option>
+            </select>
           )}
         </div>
 

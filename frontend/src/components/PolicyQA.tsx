@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import { API } from '../api';
 import {
   Search, CheckCircle, AlertCircle, HelpCircle,
   FileText, Loader, BookOpen, ChevronDown, ChevronUp,
@@ -364,7 +365,7 @@ export const PolicyQA = () => {
         setStep(s => (s < 3 ? s + 1 : s));
       }, 1200);
 
-      const res = await fetch('/rag/ask', {
+      const res = await fetch(`${API}/rag/ask`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ question: query, top_k: topK }),

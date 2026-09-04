@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 class QueryRequest(BaseModel):
     message: str
+    language: Optional[str] = "en"   # "en" | "hi" | "mr"
 
 
 class QueryResponse(BaseModel):

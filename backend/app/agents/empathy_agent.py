@@ -2,6 +2,7 @@ import os
 import json
 from google import genai
 from google.genai import types
+from app.services import llm_text
 
 MODEL = "gemini-flash-lite-latest"
 
@@ -79,22 +80,10 @@ CRITICAL LANGUAGE GUIDELINES:
 6. Output strictly valid JSON with "title" and "message".
 """
 
-        client = _get_genai_client()
-        if not client:
-            return EmpathyAgent._fallback_response(decision, assessment)
-
-        try:
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            print(f"EmpathyAgent Error: {e}")
-            return EmpathyAgent._fallback_response(decision, assessment)
+        parsed = llm_text.complete_json(prompt)
+        if parsed and parsed.get("message"):
+            return parsed
+        return EmpathyAgent._fallback_response(decision, assessment)
 
     @staticmethod
     def _fallback_response(decision: str, assessment) -> dict:

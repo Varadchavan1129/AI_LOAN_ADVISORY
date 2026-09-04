@@ -7,6 +7,7 @@ import {
   FileSearch, ArrowLeft, Database, HardDrive, Hash, MessageSquare,
 } from 'lucide-react';
 import { PolicyQA } from './PolicyQA';
+import { API } from '../api';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface DocRecord {
@@ -77,7 +78,7 @@ function ChunkModal({ doc, onClose }: { doc: DocRecord; onClose: () => void }) {
   const loadChunks = async (p: number) => {
     setLoading(true);
     try {
-      const res  = await fetch(`/admin/documents/${doc.id}/chunks?page=${p}&page_size=${PAGE_SIZE}`, {
+      const res  = await fetch(`${API}/admin/documents/${doc.id}/chunks?page=${p}&page_size=${PAGE_SIZE}`, {
         headers: adminHeaders(),
       });
       const data = await res.json();
@@ -193,7 +194,7 @@ export const DocumentManager = () => {
   const fetchDocs = async () => {
     setLoading(true);
     try {
-      const res  = await fetch('/admin/documents', { headers: adminHeaders() });
+      const res  = await fetch(`${API}/admin/documents`, { headers: adminHeaders() });
       const data = await res.json();
       setDocs(data.documents || []);
     } catch (_) {
@@ -217,7 +218,7 @@ export const DocumentManager = () => {
     form.append('file', file);
 
     try {
-      const res  = await fetch('/admin/documents/upload', {
+      const res  = await fetch(`${API}/admin/documents/upload`, {
         method:  'POST',
         headers: adminHeaders(),
         body:    form,
@@ -240,7 +241,7 @@ export const DocumentManager = () => {
   const handleProcess = async (doc: DocRecord) => {
     setProcessingId(doc.id);
     try {
-      const res  = await fetch(`/admin/documents/${doc.id}/process`, {
+      const res  = await fetch(`${API}/admin/documents/${doc.id}/process`, {
         method:  'POST',
         headers: adminHeaders(),
       });
@@ -262,7 +263,7 @@ export const DocumentManager = () => {
   const handleDelete = async (doc: DocRecord) => {
     if (!window.confirm(`Delete "${doc.original_name}"? This cannot be undone.`)) return;
     try {
-      await fetch(`/admin/documents/${doc.id}`, {
+      await fetch(`${API}/admin/documents/${doc.id}`, {
         method:  'DELETE',
         headers: adminHeaders(),
       });

@@ -23,18 +23,9 @@ from typing import List, Dict, Optional, Tuple
 
 from google import genai
 from google.genai import types
-
-_client: Optional[genai.Client] = None
-MODEL = "models/gemini-flash-latest"
+from app.services import llm_text
 
 VALID_VERDICTS = {"SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED"}
-
-
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    return _client
 
 
 def _evidence_summary(chunks: List[Dict]) -> str:
@@ -141,18 +132,8 @@ Respond with ONLY a JSON object, no other text:
   "unsupported_claims": ["Specific claims not found in evidence, if any"]
 }}"""
 
-    client = _get_client()
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=500,
-            ),
-        )
-    except Exception as api_err:
-        print(f"ValidationAgent Gemini API error: {api_err}")
+    parsed = llm_text.complete_json(prompt)
+    if parsed is None:
         # Graceful fallback: treat as PARTIALLY_SUPPORTED so the RAG answer
         # still reaches the user rather than being discarded.
         return {
@@ -160,8 +141,7 @@ Respond with ONLY a JSON object, no other text:
             "reasoning":          "Validation service temporarily unavailable.",
             "unsupported_claims": [],
         }
-
-    raw = (response.text or "").strip()
+    raw = json.dumps(parsed)
     parsed = _parse_verdict_json(raw)
 
     if parsed:
@@ -223,22 +203,10 @@ UNSUPPORTED CLAIMS TO REMOVE:
 
 REWRITTEN ANSWER (only supported claims, cite Evidence numbers):"""
 
-    client = _get_client()
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=1500,
-            ),
-        )
-        raw_rw = (response.text or "").strip()
+    raw_rw = llm_text.complete(prompt)
+    if raw_rw:
         cleaned_rw = sanitize_rag_answer(raw_rw)
         if len(cleaned_rw) >= 20:
             return cleaned_rw
-        return clean_orig or answer
-    except Exception as api_err:
-        print(f"ValidationAgent rewrite Gemini error: {api_err}")
-        return clean_orig or answer  # return original sanitized answer if rewrite fails
+    return clean_orig or answer
 

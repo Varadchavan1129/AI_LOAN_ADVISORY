@@ -32,6 +32,7 @@ from app.agents import validation_agent
 from app.services.emi_calculator import calculate_emi, calculate_max_loan, calculate_dti
 from app.services.pdf_processor import process_pdf
 from app.services import vector_store
+from app.services import storage
 from app.db import SessionLocal
 from app.models.agent_event import AgentEvent
 from app.models.document import Document
@@ -62,6 +63,11 @@ Base.metadata.create_all(bind=engine)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     vector_store.load()   # no-op if no index on disk yet
+    try:
+        storage.init_storage()
+        logger.info("Object storage initialized.")
+    except Exception as e:
+        logger.warning(f"Object storage init failed (uploads may fail): {e}")
     yield
 
 app = FastAPI(
@@ -74,20 +80,16 @@ app = FastAPI(
     # redoc_url=None,
 )
 
-# ── CORS: restrict to localhost only ──────────────────────────────────────────
-_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
+# ── CORS ───────────────────────────────────────────────────────────────────
+# Admin auth is header-based (X-Admin-Key), not cookie-based, so we do not
+# need credentialed CORS. Allow all origins so the app works behind the
+# preview/deployment ingress.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Key"],
+    allow_headers=["*"],
 )
 
 # ── Admin auth dependency ────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ async def require_admin(request: Request):
         )
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health_check():
     """Public health check endpoint."""
     gemini_configured = bool(_GEMINI_KEY)
@@ -118,7 +120,7 @@ def health_check():
 # These were development-only endpoints that exposed internal DB structure
 # and raw financial data snapshots without any authentication.
 
-@app.post("/chat/apply-loan")
+@app.post("/api/chat/apply-loan")
 def apply_loan(data: LoanInput):
     return OrchestratorAgent.process_loan_application(data)
 
@@ -283,8 +285,34 @@ _DEFAULT_RATE    = 10.0   # % per annum (fallback when user doesn't specify)
 _DEFAULT_TENURE  = 60     # months (5 years, fallback)
 
 
-@app.post("/chat/query")
+@app.post("/api/chat/query")
 def handle_natural_query(data: QueryRequest):
+    """Route: answer the query, then optionally translate the conversation layer."""
+    resp = _answer_query(data)
+    lang = (getattr(data, "language", None) or "en").lower()
+    if isinstance(resp, dict) and lang and lang != "en":
+        resp = _translate_response(resp, lang)
+    return resp
+
+
+def _translate_response(resp: dict, lang: str) -> dict:
+    """Translate only the natural-language fields; deterministic numbers in
+    `data` are left untouched (they are formatted on the client)."""
+    from app.services import llm_text
+    lang_name = {"hi": "Hindi", "mr": "Marathi", "en": "English"}.get(lang, lang)
+    try:
+        for key in ("message", "title", "advice"):
+            if isinstance(resp.get(key), str) and resp[key].strip():
+                resp[key] = llm_text.translate(resp[key], lang_name)
+        d = resp.get("data")
+        if isinstance(d, dict) and isinstance(d.get("answer"), str) and d["answer"].strip():
+            d["answer"] = llm_text.translate(d["answer"], lang_name)
+    except Exception as e:
+        logger.warning(f"Translation skipped: {e}")
+    return resp
+
+
+def _answer_query(data: QueryRequest):
     """
     Natural-language loan query handler.
 
@@ -704,7 +732,7 @@ _ALLOWED_TYPES = {"application/pdf", "application/x-pdf"}
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
-@app.post("/admin/documents/upload")
+@app.post("/api/admin/documents/upload")
 async def upload_document(file: UploadFile = File(...), _: None = Depends(require_admin)):
     """
     Upload a PDF document.
@@ -735,12 +763,15 @@ async def upload_document(file: UploadFile = File(...), _: None = Depends(requir
         )
 
     # ── Save to disk ────────────────────────────────────────────────────────
+    # ── Store in Emergent object storage (survives restarts & deploys) ──
     doc_id      = str(uuid.uuid4())
-    stored_name = f"{doc_id}.pdf"
-    filepath    = os.path.join(UPLOAD_DIR, stored_name)
+    stored_name = f"{storage.APP_NAME}/uploads/{doc_id}.pdf"
 
-    with open(filepath, "wb") as f:
-        f.write(content)
+    try:
+        put_res = storage.put_object(stored_name, content, "application/pdf")
+        stored_name = put_res.get("path", stored_name)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to store uploaded file: {exc}")
 
     # ── Create DB record ──────────────────────────────────────────────────────────────
     db = SessionLocal()
@@ -767,7 +798,7 @@ async def upload_document(file: UploadFile = File(...), _: None = Depends(requir
         db.close()
 
 
-@app.get("/admin/documents")
+@app.get("/api/admin/documents")
 def list_documents(_: None = Depends(require_admin)):
     """List all uploaded documents with their status."""
     db = SessionLocal()
@@ -794,7 +825,7 @@ def list_documents(_: None = Depends(require_admin)):
         db.close()
 
 
-@app.post("/admin/documents/{doc_id}/process")
+@app.post("/api/admin/documents/{doc_id}/process")
 def process_document(doc_id: str, _: None = Depends(require_admin)):
     """
     Run the full PDF processing pipeline on an uploaded document:
@@ -814,11 +845,25 @@ def process_document(doc_id: str, _: None = Depends(require_admin)):
         doc.error_message = None
         db.commit()
 
-        filepath = os.path.join(UPLOAD_DIR, doc.stored_name)
+        # ── Fetch PDF from object storage into a temp file for extraction ──
+        import tempfile
+        try:
+            pdf_bytes, _ct = storage.get_object(doc.stored_name)
+        except Exception as exc:
+            doc.status        = "failed"
+            doc.error_message = f"Could not retrieve stored file: {exc}"
+            db.commit()
+            return {"status": "failed", "error_message": doc.error_message}
+
+        _tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        _tmp.write(pdf_bytes)
+        _tmp.close()
+        filepath = _tmp.name
 
         try:
             result = process_pdf(filepath, doc.id, doc.original_name)
         except (ValueError, RuntimeError) as exc:
+            os.remove(filepath)
             doc.status        = "failed"
             doc.error_message = str(exc)
             db.commit()
@@ -826,6 +871,9 @@ def process_document(doc_id: str, _: None = Depends(require_admin)):
                 "status":        "failed",
                 "error_message": str(exc),
             }
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
 
         # ── Delete old chunks if reprocessing ──────────────────────────────
         db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).delete()
@@ -871,7 +919,7 @@ def process_document(doc_id: str, _: None = Depends(require_admin)):
         db.close()
 
 
-@app.get("/admin/documents/{doc_id}/status")
+@app.get("/api/admin/documents/{doc_id}/status")
 def get_document_status(doc_id: str, _: None = Depends(require_admin)):
     """Get current processing status of a document."""
     db = SessionLocal()
@@ -892,7 +940,7 @@ def get_document_status(doc_id: str, _: None = Depends(require_admin)):
         db.close()
 
 
-@app.get("/admin/documents/{doc_id}/chunks")
+@app.get("/api/admin/documents/{doc_id}/chunks")
 def get_document_chunks(doc_id: str, page: int = 1, page_size: int = 10, _: None = Depends(require_admin)):
     """List chunks for a document with pagination."""
     db = SessionLocal()
@@ -934,7 +982,7 @@ def get_document_chunks(doc_id: str, page: int = 1, page_size: int = 10, _: None
         db.close()
 
 
-@app.delete("/admin/documents/{doc_id}")
+@app.delete("/api/admin/documents/{doc_id}")
 def delete_document(doc_id: str, _: None = Depends(require_admin)):
     """Delete a document: removes DB record, all chunks, file on disk, and vector index entries."""
     db = SessionLocal()
@@ -948,10 +996,8 @@ def delete_document(doc_id: str, _: None = Depends(require_admin)):
         # Delete chunks from DB
         db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).delete()
 
-        # Delete file from disk
-        filepath = os.path.join(UPLOAD_DIR, doc.stored_name)
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        # Object storage has no delete API; the stored object is orphaned
+        # but inaccessible once the DB record and chunks are removed.
 
         # Delete record from DB
         db.delete(doc)
@@ -973,7 +1019,7 @@ def delete_document(doc_id: str, _: None = Depends(require_admin)):
 # PHASE 4 — SEMANTIC SEARCH ENDPOINTS
 # ===========================================================================
 
-@app.post("/search")
+@app.post("/api/search")
 def semantic_search(data: SearchRequest):
     """
     Semantic search across all indexed documents using FAISS + Gemini embeddings.
@@ -1001,7 +1047,7 @@ def semantic_search(data: SearchRequest):
     }
 
 
-@app.get("/search/stats")
+@app.get("/api/search/stats")
 def search_stats():
     """Return vector store statistics: total chunks, documents indexed."""
     return vector_store.get_stats()
@@ -1021,7 +1067,7 @@ _FALLBACK_ANSWER = (
 )
 
 
-@app.post("/rag/ask")
+@app.post("/api/rag/ask")
 def rag_ask(data: RAGRequest):
     """
     Full Phase 5 RAG pipeline:

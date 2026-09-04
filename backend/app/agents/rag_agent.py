@@ -16,19 +16,10 @@ from typing import List, Dict, Optional
 
 from google import genai
 from google.genai import types
-
-_client: Optional[genai.Client] = None
-MODEL = "models/gemini-flash-latest"
+from app.services import llm_text
 
 # Sentinel returned by the model when evidence doesn't contain the answer
 _NOT_IN_EVIDENCE = "NOT_IN_EVIDENCE"
-
-
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    return _client
 
 
 def _build_evidence_block(chunks: List[Dict]) -> str:
@@ -293,20 +284,9 @@ USER QUESTION: {question}
 
 ANSWER (cite Evidence numbers for every fact you state):"""
 
-    client = _get_client()
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=1500,
-            ),
-        )
-        raw_answer = (response.text or "").strip()
-    except Exception as api_err:
-        print(f"RAGAgent Gemini API error: {api_err}")
-        # Direct chunk text extraction fallback if Gemini API is rate-limited (429) or unavailable
+    raw_answer = llm_text.complete(prompt)
+    if not raw_answer:
+        # Direct chunk text extraction fallback if the LLM is rate-limited or unavailable
         if chunks and chunks[0].get("score", 0) >= 0.45:
             extracted_answer = format_extracted_policy_answer(question, chunks)
             sources = [
@@ -332,6 +312,8 @@ ANSWER (cite Evidence numbers for every fact you state):"""
             "sources":         [],
             "raw_response":    None,
         }
+
+    raw_answer = raw_answer.strip()
 
     # Detect NOT_IN_EVIDENCE sentinel
     if raw_answer.upper().startswith(_NOT_IN_EVIDENCE) or raw_answer.strip() == _NOT_IN_EVIDENCE:

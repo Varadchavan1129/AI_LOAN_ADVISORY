@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, User, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { API } from '../api';
 
 // The admin secret is sent as an HTTP header (X-Admin-Key) to the backend.
 // It must match ADMIN_SECRET_KEY in backend/.env.
@@ -31,7 +32,7 @@ export const AdminLogin = () => {
 
         // Step 2: verify the admin key works against the backend
         try {
-            const res = await fetch('/admin/documents', {
+            const res = await fetch(`${API}/admin/documents`, {
                 method: 'GET',
                 headers: { 'X-Admin-Key': ADMIN_SECRET },
             });
