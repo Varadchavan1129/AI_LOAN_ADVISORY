@@ -27,6 +27,11 @@ from app.services import llm_text
 
 VALID_VERDICTS = {"SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED"}
 
+# Returned when the validation LLM itself could not be reached. This is NOT a
+# verdict about the answer — the UI must present it as "not verified", never as
+# verified or partially verified.
+UNVERIFIED = "UNVERIFIED"
+
 
 def _evidence_summary(chunks: List[Dict]) -> str:
     """Compact evidence block for the validation prompt."""
@@ -37,33 +42,6 @@ def _evidence_summary(chunks: List[Dict]) -> str:
             f"[Evidence {i}] {ch['document_name']} | Page {ch['page_number']}\n{text}"
         )
     return "\n\n".join(parts)
-
-
-def _parse_verdict_json(raw: str) -> Optional[Dict]:
-    """Extract and parse a JSON object from the model's raw output."""
-    # Strip markdown code fences (```json ... ``` or ``` ... ```)
-    cleaned = re.sub(r'```(?:json)?\s*', '', raw).strip()
-
-    # Try direct JSON parse on cleaned string
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Try direct JSON parse on original string
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to extract embedded JSON object
-    match = re.search(r'\{[^{}]*"verdict"[^{}]*\}', cleaned, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
-    return None
 
 
 def _fallback_verdict(raw: str) -> str:
@@ -102,6 +80,7 @@ def validate_answer(
             "verdict":            "UNSUPPORTED",
             "reasoning":          "No answer or evidence to validate.",
             "unsupported_claims": [],
+            "available":          True,
         }
 
     evidence_summary = _evidence_summary(chunks)
@@ -134,31 +113,24 @@ Respond with ONLY a JSON object, no other text:
 
     parsed = llm_text.complete_json(prompt)
     if parsed is None:
-        # Graceful fallback: treat as PARTIALLY_SUPPORTED so the RAG answer
-        # still reaches the user rather than being discarded.
+        # The validation model could not be reached. Report this honestly —
+        # never fabricate a SUPPORTED / PARTIALLY_SUPPORTED verdict.
         return {
-            "verdict":            "PARTIALLY_SUPPORTED",
-            "reasoning":          "Validation service temporarily unavailable.",
+            "verdict":            UNVERIFIED,
+            "reasoning":          "The validation agent could not be reached, so this answer "
+                                  "has NOT been fact-checked against the retrieved evidence.",
             "unsupported_claims": [],
-        }
-    raw = json.dumps(parsed)
-    parsed = _parse_verdict_json(raw)
-
-    if parsed:
-        verdict = str(parsed.get("verdict", "UNSUPPORTED")).strip().upper()
-        if verdict not in VALID_VERDICTS:
-            verdict = "UNSUPPORTED"
-        return {
-            "verdict":            verdict,
-            "reasoning":          str(parsed.get("reasoning", "")),
-            "unsupported_claims": parsed.get("unsupported_claims", []),
+            "available":          False,
         }
 
-    # Fallback when JSON parsing fails
+    verdict = str(parsed.get("verdict", "")).strip().upper().replace(" ", "_")
+    if verdict not in VALID_VERDICTS:
+        verdict = _fallback_verdict(json.dumps(parsed))
     return {
-        "verdict":            _fallback_verdict(raw),
-        "reasoning":          raw[:300],
-        "unsupported_claims": [],
+        "verdict":            verdict,
+        "reasoning":          str(parsed.get("reasoning", "")),
+        "unsupported_claims": parsed.get("unsupported_claims", []) or [],
+        "available":          True,
     }
 
 

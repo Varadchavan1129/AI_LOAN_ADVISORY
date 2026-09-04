@@ -301,12 +301,18 @@ def _translate_response(resp: dict, lang: str) -> dict:
     from app.services import llm_text
     lang_name = {"hi": "Hindi", "mr": "Marathi", "en": "English"}.get(lang, lang)
     try:
+        original_message = resp.get("message") if isinstance(resp.get("message"), str) else None
         for key in ("message", "title", "advice"):
             if isinstance(resp.get(key), str) and resp[key].strip():
                 resp[key] = llm_text.translate(resp[key], lang_name)
         d = resp.get("data")
         if isinstance(d, dict) and isinstance(d.get("answer"), str) and d["answer"].strip():
-            d["answer"] = llm_text.translate(d["answer"], lang_name)
+            # For policy answers `message` and `data.answer` are the same text.
+            # Reuse the single translation so the two never diverge.
+            if original_message is not None and d["answer"] == original_message:
+                d["answer"] = resp["message"]
+            else:
+                d["answer"] = llm_text.translate(d["answer"], lang_name)
     except Exception as e:
         logger.warning(f"Translation skipped: {e}")
     return resp
@@ -636,6 +642,16 @@ def _answer_query(data: QueryRequest):
 
                 if relevant_chunks:
                     gen_result  = rag_agent.generate_answer(message, relevant_chunks)
+
+                    if gen_result.get("generation_failed"):
+                        return {
+                            "type": "error",
+                            "message": (
+                                "The policy answer service is temporarily unavailable, so no answer "
+                                "could be generated from your documents. Please try again in a moment."
+                            ),
+                            "data": None,
+                        }
 
                     if not gen_result["not_in_evidence"] and gen_result["answer"]:
                         val = validation_agent.validate_answer(
@@ -1128,6 +1144,12 @@ def rag_ask(data: RAGRequest):
     # ── Step 2: Generate grounded answer ────────────────────────────────
     gen_result = rag_agent.generate_answer(question, relevant_chunks)
 
+    if gen_result.get("generation_failed"):
+        raise HTTPException(
+            status_code=503,
+            detail="Answer generation service is temporarily unavailable. Please retry.",
+        )
+
     if gen_result["not_in_evidence"] or not gen_result["answer"]:
         return {
             "question":         question,
@@ -1176,10 +1198,16 @@ def rag_ask(data: RAGRequest):
         is_verified   = False
         final_sources = candidate_sources
 
-    else:  # UNSUPPORTED
-        final_answer  = _FALLBACK_ANSWER
-        is_verified   = False
-        final_sources = []
+    else:  # UNSUPPORTED or UNVERIFIED
+        if verdict == validation_agent.UNVERIFIED:
+            # Validation could not run — deliver the grounded answer but do not
+            # claim it was verified.
+            final_answer  = candidate_answer
+            final_sources = candidate_sources
+        else:
+            final_answer  = _FALLBACK_ANSWER
+            final_sources = []
+        is_verified = False
 
     return {
         "question":         question,

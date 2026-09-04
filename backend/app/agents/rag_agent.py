@@ -54,186 +54,60 @@ def _extract_cited_indices(answer_text: str, num_chunks: int) -> List[int]:
     return sorted(indices)
 
 
-def clean_chunk_text(text: str) -> str:
-    """Strip PDF watermarks, headers, and section numbers from raw chunk text."""
-    if not text:
-        return ""
-    t = re.sub(r'!!\s*DEMO DOCUMENT[^\n]*!!', '', text, flags=re.IGNORECASE)
-    t = re.sub(r'Loan FAQ\s*-\s*Most Frequently Asked Questions[^\n]*', '', t, flags=re.IGNORECASE)
-    t = re.sub(r'Page\s+\d+(?:\s+of\s+\d+)?', '', t, flags=re.IGNORECASE)
-    t = re.sub(r'\b\d+\.\s*(?:Personal Loan Eligibility Criteria|Required Documents|Rejection Reasons|Debt-to-Income Ratio Policy)\b', '', t, flags=re.IGNORECASE)
-    t = re.sub(r'\bQ\d+\.\s*', '', t, flags=re.IGNORECASE)
-    lines = [l.strip() for l in t.split('\n') if l.strip()]
-    return "\n".join(lines).strip()
-
-
 def sanitize_rag_answer(text: str) -> str:
     """
-    Clean up generated or rewritten RAG text:
-    - Removes meta-preambles like 'formatting clean and precise.' or 'Here is the answer:'
-    - Strips inline evidence citation tags like '(Evidence 1)' or '[Evidence 2]' for clean UI display
-    - Trims incomplete bullet points or mid-sentence truncations
+    Light, non-destructive cleanup of generated / rewritten RAG text.
+
+    Only two things are removed:
+      1. Meta preambles the model sometimes leaks ("Here is the answer:").
+      2. Inline evidence citation tags — "(Evidence 1)" / "[Evidence 2]" —
+         which are an internal prompt convention, not user-facing content.
+
+    Everything else is preserved verbatim. In particular this function NEVER
+    truncates, slices or drops content: doing so previously produced corrupted,
+    mid-sentence answers in the UI. Markdown structure (headings, bullet
+    nesting, bold, blank lines) is preserved.
     """
     if not text:
         return ""
 
     s = text.strip()
 
-    # 1. Strip meta preambles / thought leakages / PDF prefixes
+    # 1. Strip a leaked meta preamble on the very first line only
     s = re.sub(
-        r'^(?:formatting[^\n.]*[\.\:]\s*|here\s+is[^\n.]*[\.\:]\s*|based\s+on\s+the\s+provided\s+evidence[,\:\.]\s*|according\s+to\s+policy\s+document[^\n]*[\:\.]\s*)',
+        r'^(?:formatting[^\n.]*[\.\:]\s*|here\s+is[^\n.]*[\.\:]\s*)',
         '',
         s,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     ).strip()
 
-    # 2. Strip citation tags like (Evidence 1), [Evidence 2], (Evidence 1, 2)
-    s = re.sub(r'[\(\[]Evidence\s+\d+(?:,\s*\d+)*[\]\)]', '', s, flags=re.IGNORECASE)
+    # 2. Strip citation tags: (Evidence 1), [Evidence 2], (Evidence 1, 2 and 3)
+    s = re.sub(
+        r'[\(\[]\s*Evidence\s+\d+(?:\s*(?:,|and|&)\s*\d+)*\s*[\]\)]',
+        '',
+        s,
+        flags=re.IGNORECASE,
+    )
     s = re.sub(r'\bEvidence\s+\d+\b', '', s, flags=re.IGNORECASE)
 
-    # Clean double spaces and duplicate newlines
-    s = re.sub(r'[ \t]+', ' ', s).strip()
+    # 3. Per-line tidy-up. Leading indentation is preserved so nested markdown
+    #    lists keep rendering correctly.
+    out_lines = []
+    for line in s.split("\n"):
+        m = re.match(r'^([ \t]*)(.*)$', line)
+        indent, body = m.group(1), m.group(2)
+        body = re.sub(r'[ \t]{2,}', ' ', body)          # collapse runs of spaces
+        body = re.sub(r'\(\s*\)|\[\s*\]', '', body)     # empty brackets left by (2)
+        body = re.sub(r'[ \t]+([,.;:])', r'\1', body)   # space orphaned before punctuation
+        body = body.rstrip()
+        # A single leading space is not enough for markdown list nesting
+        if indent == " " and re.match(r'^[*\-+]\s', body):
+            indent = "  "
+        out_lines.append(indent + body)
+
+    s = "\n".join(out_lines)
     s = re.sub(r'\n{3,}', '\n\n', s)
-
-    # 3. Handle truncated lines (e.g. "* **Minimum Required Score" without content)
-    lines = s.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        l = line.strip()
-        # Drop incomplete markdown bullet headers with no content
-        if l.startswith('* **') and len(l) < 35 and not any(c in l for c in ['.', ':', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
-            continue
-        cleaned_lines.append(line)
-
-    s = "\n".join(cleaned_lines).strip()
-
-    # If text ends abruptly without terminal punctuation, trim back to last full sentence if possible
-    if s and s[-1] not in '.!?\n"\'*}`':
-        last_punct = max(s.rfind('.'), s.rfind('!'), s.rfind('?'))
-        if last_punct > 40:
-            s = s[:last_punct + 1]
-
     return s.strip()
-
-
-def format_extracted_policy_answer(question: str, chunks: List[Dict]) -> str:
-    """Format a direct, clean, concise, topic-specific answer from question & chunks."""
-    q_lower = question.lower()
-
-    # 1. Credit Score / CIBIL Score / Credit Repair
-    if any(w in q_lower for w in ["credit score", "cibil", "score", "credit health", "improve score", "boost score"]):
-        return (
-            "A minimum CIBIL credit score of **650** is generally required for a personal loan. "
-            "Scores of **750 and above** are considered excellent and qualify you for the lowest interest rates and fastest loan approvals.\n\n"
-            "• **Key Factors**: Payment history (35%), Credit utilization <30% (30%), Credit mix (25%), Hard inquiries (10%).\n"
-            "• **To Improve**: Pay all dues before due date, keep credit card utilization below 30%, dispute report errors, and wait 6 months between loan applications."
-        )
-
-    # 2. Home Loan & Income Tax Deductions (Section 24b, 80C, 80EEA)
-    if any(w in q_lower for w in ["home loan", "housing loan", "tax benefit", "tax deduction", "section 24", "80c", "stamp duty"]):
-        return (
-            "Home loan tax benefits under the Indian Income Tax Act:\n\n"
-            "• **Section 24(b)**: Tax deduction up to **₹2 Lakhs/year** on interest paid for self-occupied home.\n"
-            "• **Section 80C**: Tax deduction up to **₹1.5 Lakhs/year** on principal repayment.\n"
-            "• **Section 80EEA**: Additional **₹1.5 Lakhs** interest deduction for first-time affordable homebuyers.\n"
-            "• **RBI LTV Limits**: Up to ₹30L = 90% LTV; ₹30L–75L = 80% LTV; >₹75L = 75% LTV."
-        )
-
-    # 3. Education Loan & PM Vidyalakshmi Portal
-    if any(w in q_lower for w in ["education loan", "student loan", "study loan", "vidyalakshmi", "moratorium"]):
-        return (
-            "Education loans fund tuition, hostel, and study expenses for studies in India or abroad:\n\n"
-            "• **Collateral Norms**: Up to ₹4 Lakhs (No collateral), ₹4L–7.5L (Third-party guarantee), >₹7.5L (Tangible collateral required).\n"
-            "• **Moratorium Period**: Course duration + 12 months (or 6 months after job placement).\n"
-            "• **Tax Benefit**: Section 80E provides 100% tax deduction on interest paid for 8 years (no upper cap).\n"
-            "• **PM Vidyalakshmi**: Single government portal (www.vidyalakshmi.co.in) to apply across 38+ banks."
-        )
-
-    # 4. Business & MSME MUDRA Loans
-    if any(w in q_lower for w in ["business loan", "mudra", "msme", "shishu", "kishore", "tarun", "cgtmse"]):
-        return (
-            "Pradhan Mantri MUDRA Yojana offers collateral-free business loans under 3 categories:\n\n"
-            "• **Shishu**: Loans up to **₹50,000** for micro startups\n"
-            "• **Kishore**: Loans **₹50,001 to ₹5 Lakhs** for expanding businesses\n"
-            "• **Tarun**: Loans **₹5,00,001 to ₹10 Lakhs** for established enterprises\n"
-            "• **CGTMSE Scheme**: Credit guarantee scheme offering collateral-free loans up to ₹2 Crores to eligible MSMEs."
-        )
-
-    # 5. Gold Loans & RBI LTV Norms
-    if any(w in q_lower for w in ["gold loan", "gold", "jewel", "ltv"]):
-        return (
-            "Gold loan key guidelines and RBI regulations:\n\n"
-            "• **RBI LTV Limit**: RBI caps maximum Loan-to-Value (LTV) at **75% of gold market value**.\n"
-            "• **Interest Rates**: 7% to 13% p.a. at banks, 12% to 26% p.a. at NBFCs.\n"
-            "• **Repayment Options**: Bullet payment (interest + principal at maturity), EMI, or monthly interest.\n"
-            "• **Approval**: Fast disbursement within 30–60 minutes without CIBIL score requirements."
-        )
-
-    # 6. Prepayment, Foreclosure & RBI Norms
-    if any(w in q_lower for w in ["prepayment", "prepay", "foreclosure", "early payment", "penalty"]):
-        return (
-            "RBI guidelines on loan prepayment and foreclosure penalties:\n\n"
-            "• **Floating Rate Loans**: Lenders **CANNOT charge any prepayment or foreclosure penalty** on floating rate home loans or personal loans to individual borrowers.\n"
-            "• **Fixed Rate Loans**: Lenders may charge 2% to 4% foreclosure fee on outstanding principal.\n"
-            "• **Strategy**: Prepaying early in the tenure saves maximum interest because early EMIs are interest-heavy."
-        )
-
-    # 7. Borrower Rights & Banking Ombudsman
-    if any(w in q_lower for w in ["ombudsman", "rights", "harassment", "recovery agent", "complaint", "rbi portal"]):
-        return (
-            "Borrower rights and RBI dispute resolution mechanisms:\n\n"
-            "• **Fair Practice Code**: Lenders must provide a transparent Sanction Letter detailing interest, fees, penal charges, and APR.\n"
-            "• **Recovery Agent Norms**: RBI prohibits harassment, coercive calls before 8 AM or after 7 PM, or unauthorized visits.\n"
-            "• **RBI Ombudsman**: If a bank/NBFC fails to resolve a complaint within 30 days, file a free dispute online at **cms.rbi.org.in**."
-        )
-
-    # 8. Loan Balance Transfer & Top-Up Loans
-    if any(w in q_lower for w in ["balance transfer", "transfer loan", "top up", "top-up"]):
-        return (
-            "Loan Balance Transfer & Top-Up Loan features:\n\n"
-            "• **Balance Transfer**: Move an existing loan from a higher-rate lender to a lower-rate lender. Recommended if rate differential is ≥0.5%–1.0% with >3 years remaining tenure.\n"
-            "• **Top-Up Loans**: Additional loan facility available on existing home or personal loans at lower interest rates than fresh personal loans."
-        )
-
-    # 9. Required Documents
-    if any(w in q_lower for w in ["document", "documents", "paperwork", "proof", "kyc"]):
-        return (
-            "Standard documents required for a loan application:\n\n"
-            "• **Identity & Address Proof**: Aadhaar Card, PAN Card, Passport, or Voter ID\n"
-            "• **Income Proof (Salaried)**: Last 3 months salary slips & Form 16 / ITR\n"
-            "• **Bank Statements**: Last 6 months bank statement\n"
-            "• **Self-Employed**: 2–3 years ITR with CA-certified financials and business proof"
-        )
-
-    # 10. Maximum DTI Ratio
-    if any(w in q_lower for w in ["dti", "debt to income", "ratio", "max dti"]):
-        return (
-            "The maximum Debt-to-Income (DTI) ratio allowed by most lenders is typically **40% to 50%**:\n\n"
-            "• **DTI ≤ 40%**: Ideal — easily approved\n"
-            "• **DTI 41%–50%**: Moderate risk — conditional approval\n"
-            "• **DTI > 50%**: High risk — loan applications are generally rejected"
-        )
-
-    # 11. Rejection Reasons / What happens if rejected
-    if any(w in q_lower for w in ["reject", "rejected", "denied", "rejection"]):
-        return (
-            "Common reasons for loan rejection:\n\n"
-            "• CIBIL score below 650\n"
-            "• DTI ratio above 50% (total EMIs exceeding half of income)\n"
-            "• Employment instability (less than 1 year at current job)\n"
-            "• Multiple loan applications in a short period\n\n"
-            "**Steps to Improve**: Pay all EMIs on time, reduce existing debt, and wait 6 months before re-applying."
-        )
-
-    # 12. Generic Semantic Extraction from Retrieved FAISS Chunks
-    if chunks:
-        top_text = clean_chunk_text(chunks[0]["text"])
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', top_text) if len(s.strip()) > 10]
-        summary = " ".join(sentences[:3])
-        if len(summary) >= 30:
-            return summary
-
-    return "For personal and retail loans, lenders evaluate your CIBIL score (minimum 650+), monthly income, and DTI ratio (below 40-50%). Please share your specific query or financial details to assist you."
 
 
 def generate_answer(question: str, chunks: List[Dict]) -> Dict:
@@ -245,17 +119,19 @@ def generate_answer(question: str, chunks: List[Dict]) -> Dict:
         chunks   : Retrieved chunks from vector_store.search() with full metadata.
 
     Returns a dict with:
-        answer          : The generated answer text, or None if not in evidence.
-        not_in_evidence : True if the model could not find the answer.
-        sources         : List of cited source metadata dicts.
-        raw_response    : Raw LLM output string (for validation agent).
+        answer            : The generated answer text, or None.
+        not_in_evidence   : True if the evidence does not contain the answer.
+        generation_failed : True if the LLM provider was unavailable.
+        sources           : List of cited source metadata dicts.
+        raw_response      : Raw LLM output string (for validation agent).
     """
     if not chunks:
         return {
-            "answer":          None,
-            "not_in_evidence": True,
-            "sources":         [],
-            "raw_response":    None,
+            "answer":            None,
+            "not_in_evidence":   True,
+            "generation_failed": False,
+            "sources":           [],
+            "raw_response":      None,
         }
 
     evidence_block = _build_evidence_block(chunks)
@@ -286,31 +162,15 @@ ANSWER (cite Evidence numbers for every fact you state):"""
 
     raw_answer = llm_text.complete(prompt)
     if not raw_answer:
-        # Direct chunk text extraction fallback if the LLM is rate-limited or unavailable
-        if chunks and chunks[0].get("score", 0) >= 0.45:
-            extracted_answer = format_extracted_policy_answer(question, chunks)
-            sources = [
-                {
-                    "document_name":    ch["document_name"],
-                    "document_id":      ch["document_id"],
-                    "page_number":      ch["page_number"],
-                    "section":          ch.get("section"),
-                    "chunk_id":         ch["chunk_id"],
-                    "relevance_score":  round(float(ch.get("score", 0.0)), 4),
-                }
-                for ch in chunks[:2]
-            ]
-            return {
-                "answer":          extracted_answer,
-                "not_in_evidence": False,
-                "sources":         sources,
-                "raw_response":    extracted_answer,
-            }
+        # The generator is unavailable (rate limit / provider error). We do NOT
+        # synthesise an answer from raw chunk text — that produced corrupted,
+        # mid-sentence output. Surface the failure honestly instead.
         return {
-            "answer":          None,
-            "not_in_evidence": True,
-            "sources":         [],
-            "raw_response":    None,
+            "answer":            None,
+            "not_in_evidence":   False,
+            "generation_failed": True,
+            "sources":           [],
+            "raw_response":      None,
         }
 
     raw_answer = raw_answer.strip()
@@ -318,10 +178,11 @@ ANSWER (cite Evidence numbers for every fact you state):"""
     # Detect NOT_IN_EVIDENCE sentinel
     if raw_answer.upper().startswith(_NOT_IN_EVIDENCE) or raw_answer.strip() == _NOT_IN_EVIDENCE:
         return {
-            "answer":          None,
-            "not_in_evidence": True,
-            "sources":         [],
-            "raw_response":    raw_answer,
+            "answer":            None,
+            "not_in_evidence":   True,
+            "generation_failed": False,
+            "sources":           [],
+            "raw_response":      raw_answer,
         }
 
     # Build sources from cited evidence blocks
@@ -344,8 +205,9 @@ ANSWER (cite Evidence numbers for every fact you state):"""
     cleaned_answer = sanitize_rag_answer(raw_answer)
 
     return {
-        "answer":          cleaned_answer or raw_answer,
-        "not_in_evidence": False,
-        "sources":         sources,
-        "raw_response":    raw_answer,
+        "answer":            cleaned_answer or raw_answer,
+        "not_in_evidence":   False,
+        "generation_failed": False,
+        "sources":           sources,
+        "raw_response":      raw_answer,
     }

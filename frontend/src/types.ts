@@ -130,12 +130,13 @@ export interface RAGSource {
 export interface RAGData {
   answer:        string;
   sources:       RAGSource[];
-  support_level: 'SUPPORTED' | 'PARTIALLY_SUPPORTED' | 'UNSUPPORTED';
+  support_level: 'SUPPORTED' | 'PARTIALLY_SUPPORTED' | 'UNSUPPORTED' | 'UNVERIFIED' | 'LOW_CONFIDENCE';
   is_verified:   boolean;
-  validation: {
+  validation?: {
     verdict:            string;
     reasoning:          string;
     unsupported_claims: string[];
+    available?:         boolean;
   };
 }
 

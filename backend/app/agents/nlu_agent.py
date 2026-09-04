@@ -163,8 +163,11 @@ def _fallback_general_answer(message: str) -> str:
             "Most banks prefer a FOIR under 40-50% for loan approvals to ensure you have sufficient disposable income."
         )
     else:
-        from app.agents import rag_agent
-        return rag_agent.format_extracted_policy_answer(message, [])
+        return (
+            "I couldn't reach the AI service just now, so I can't answer that reliably. "
+            "Please try again in a moment, or ask me to calculate your EMI, DTI or loan "
+            "eligibility — those are computed locally and always available."
+        )
 
 
 # ---------------------------------------------------------------------------

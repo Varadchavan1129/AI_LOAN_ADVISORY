@@ -115,6 +115,8 @@ def translate(text: str, target_language: str) -> str | None:
         "STRICT RULES: Keep the exact meaning; do NOT add, remove, or invent any information. "
         "Preserve ALL numbers, currency symbols and amounts (like ₹5,00,000), percentages, dates, "
         "URLs, and English proper nouns / brand names (e.g. SBI, HDFC, CIBIL, RBI, EMI, FOIR, DTI) as-is. "
+        "Always keep numerals in Western Arabic digits (0-9). NEVER convert digits to Devanagari or any "
+        "other numeral system. "
         "Preserve Markdown formatting (bullets, bold, headings). "
         "Output ONLY the translated text with no preamble or explanation."
     )

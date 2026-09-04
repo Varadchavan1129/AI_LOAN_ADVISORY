@@ -48,3 +48,31 @@ Preserve existing features; never invent bank/RBI policies, rates or data.
 - P1: UI polish pass on glassmorphism (contrast/readability), recommendation card
 - P2: Optional Graph relationships (user→profile→eligibility→product→lender) — only if real benefit
 - P2: Refresh/verify loan-product data periodically (verification_status/last_verified_at)
+
+## RAG response corruption fix (2026-06-04)
+Root cause (two independent defects, both in the RAG failure path):
+1. `rag_agent.generate_answer()` — when the text LLM returned nothing, it fell back to
+   `format_extracted_policy_answer()`, which either returned HARDCODED canned answers or
+   naively sliced sentences out of `clean_chunk_text()`-mutilated chunk text. The greedy
+   `!!DEMO DOCUMENT[^\n]*!!` regex ate mid-line content, producing the corrupted UI output
+   ("ial institution. Contents: 1. Eligibility Criteria || 3.").
+   Also `sanitize_rag_answer()` truncated at the last `.`/`!`/`?`, dropped short bullet lines
+   and collapsed all whitespace (destroying markdown list nesting).
+2. `validation_agent.validate_answer()` — on LLM failure it returned a FAKE
+   `PARTIALLY_SUPPORTED` verdict, so the UI showed the green/amber "Partially Verified —
+   Some claims confirmed by evidence" badge when no fact-check had actually run.
+
+Changes:
+- Deleted `format_extracted_policy_answer()` and `clean_chunk_text()` (no hardcoded answers,
+  no chunk-slicing fabrication). LLM failure now returns `generation_failed: True`.
+- Rewrote `sanitize_rag_answer()`: non-destructive — strips only meta preambles and
+  `(Evidence N)` citation tags; NEVER truncates; preserves markdown + list indentation
+  (normalises 1-space nested bullets to 2 spaces).
+- New `UNVERIFIED` validation state (`available: false`) when the validation LLM is
+  unreachable. Answer is still delivered, badge reads "Not Verified".
+- `/api/chat/query` returns a clear error on `generation_failed`; `/api/rag/ask` returns 503.
+- `_translate_response` reuses one translation for `message`/`data.answer` so they cannot
+  diverge; translate prompt now forbids Devanagari numeral conversion.
+- Frontend `QueryResultCard`: verdict config for UNVERIFIED / LOW_CONFIDENCE, badge derived
+  from config, unsupported claims listed, `data-testid` on badge/answer/validation.
+NOT_IN_EVIDENCE behaviour, source/page/relevance metadata, EMI/DTI/max-loan/ML untouched.

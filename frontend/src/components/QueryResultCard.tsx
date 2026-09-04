@@ -302,26 +302,42 @@ function PolicyCard({ data }: { data: RAGData }) {
   const verdictCfg = {
     SUPPORTED: {
       Icon: ShieldCheck,
+      badge: 'Verified',
       label: 'Verified — Fully supported by document evidence',
       cls: 'bg-emerald-900/50 border-emerald-700/40 text-emerald-300',
     },
     PARTIALLY_SUPPORTED: {
       Icon: ShieldAlert,
+      badge: 'Partially Verified',
       label: 'Partially Verified — Some claims confirmed by evidence',
       cls: 'bg-amber-900/50 border-amber-700/40 text-amber-300',
     },
     UNSUPPORTED: {
       Icon: AlertCircle,
+      badge: 'Not In Evidence',
       label: 'Not in Evidence — Answer not found in uploaded documents',
       cls: 'bg-red-900/50 border-red-700/40 text-red-300',
     },
+    UNVERIFIED: {
+      Icon: ShieldAlert,
+      badge: 'Not Verified',
+      label: 'Not Verified — The validation agent was unavailable, so this answer has NOT been fact-checked',
+      cls: 'bg-slate-800/70 border-slate-600/50 text-slate-300',
+    },
+    LOW_CONFIDENCE: {
+      Icon: ShieldAlert,
+      badge: 'Low Confidence',
+      label: 'Low Confidence — Retrieved evidence was only weakly related to the question',
+      cls: 'bg-slate-800/70 border-slate-600/50 text-slate-300',
+    },
   }[data.support_level] ?? {
     Icon: HelpCircle,
+    badge: 'Unknown',
     label: data.support_level,
     cls: 'bg-gray-700 border-gray-600 text-gray-400',
   };
 
-  const { Icon: VIcon, label: vLabel, cls: vCls } = verdictCfg;
+  const { Icon: VIcon, badge: vBadge, label: vLabel, cls: vCls } = verdictCfg;
 
   return (
     <div className="space-y-3">
@@ -331,10 +347,12 @@ function PolicyCard({ data }: { data: RAGData }) {
           <BookOpen className="w-4 h-4 text-teal-300" />
         </div>
         <span className="text-sm font-semibold text-white/80">Policy Answer</span>
-        <span className={`ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${vCls}`}>
+        <span
+          data-testid="policy-verdict-badge"
+          className={`ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${vCls}`}
+        >
           <VIcon className="w-3 h-3" />
-          {data.support_level === 'SUPPORTED' ? 'Verified' :
-           data.support_level === 'PARTIALLY_SUPPORTED' ? 'Partially Verified' : 'Not In Evidence'}
+          {vBadge}
         </span>
       </div>
 
@@ -361,19 +379,28 @@ function PolicyCard({ data }: { data: RAGData }) {
               : 'bg-amber-950/30 border-amber-800/30'
           }`}>
             <p className="text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Answer</p>
-            <MarkdownAnswer text={data.answer} />
+            <div data-testid="policy-answer-text">
+              <MarkdownAnswer text={data.answer} />
+            </div>
           </div>
 
           {/* Validation */}
           {data.validation && (
-            <div className={`rounded-xl p-3 border text-xs ${vCls}`}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <GitMerge className="w-3 h-3" />
+            <div data-testid="policy-validation-block" className={`rounded-xl p-3 border text-xs ${vCls}`}>
+              <div className="flex items-start gap-1.5 mb-1 flex-wrap">
+                <GitMerge className="w-3 h-3 mt-0.5" />
                 <span className="font-bold uppercase tracking-wide">Validation Agent: </span>
                 <span className="opacity-80">{vLabel}</span>
               </div>
               {data.validation.reasoning && (
                 <p className="opacity-70 leading-relaxed">{data.validation.reasoning}</p>
+              )}
+              {data.validation.unsupported_claims && data.validation.unsupported_claims.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5 list-disc list-inside opacity-70">
+                  {data.validation.unsupported_claims.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
               )}
             </div>
           )}
@@ -441,8 +468,8 @@ function PolicyCard({ data }: { data: RAGData }) {
                   { n: '3', icon: Database, step: 'FAISS Similarity Search', desc: 'Cosine similarity over indexed document chunks', col: 'text-blue-300' },
                   { n: '4', icon: FileText, step: 'Retrieved Evidence', desc: `${data.sources?.length ?? 0} chunk(s) from uploaded documents`, col: 'text-teal-300' },
                   { n: '5', icon: BookOpen, step: 'Gemini Answer Generation', desc: 'Grounded generation using ONLY retrieved evidence', col: 'text-cyan-300' },
-                  { n: '6', icon: GitMerge, step: 'Validation Agent', desc: `Fact-checked → ${data.support_level}`, col: 'text-amber-300' },
-                  { n: '7', icon: BadgeCheck, step: 'Final Answer', desc: data.is_verified ? 'Verified & delivered' : 'Delivered with partial verification', col: 'text-emerald-300' },
+                  { n: '6', icon: GitMerge, step: 'Validation Agent', desc: data.validation?.available === false ? 'Unavailable — answer NOT fact-checked' : `Fact-checked → ${data.support_level}`, col: 'text-amber-300' },
+                  { n: '7', icon: BadgeCheck, step: 'Final Answer', desc: data.is_verified ? 'Verified & delivered' : 'Delivered without full verification', col: 'text-emerald-300' },
                 ].map(({ n, icon: Icon, step, desc, col }, idx, arr) => (
                   <div key={n}>
                     <div className={`flex items-start gap-2 rounded-lg px-2 py-1.5 ${col}`}>
