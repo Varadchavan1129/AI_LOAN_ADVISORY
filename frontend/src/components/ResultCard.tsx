@@ -25,7 +25,7 @@ export const ResultCard = ({ result }: ResultCardProps) => {
 
   const getStatusConfig = () => {
     switch (result.status) {
-      case 'approved':
+      case 'likely_eligible':
         return {
           icon: CheckCircle,
           gradient: 'from-green-400 to-emerald-500',
@@ -33,7 +33,7 @@ export const ResultCard = ({ result }: ResultCardProps) => {
           border: 'border-green-500/30',
           iconColor: 'text-green-400',
         };
-      case 'conditional':
+      case 'review_needed':
         return {
           icon: AlertCircle,
           gradient: 'from-yellow-400 to-amber-500',
@@ -41,13 +41,21 @@ export const ResultCard = ({ result }: ResultCardProps) => {
           border: 'border-yellow-500/30',
           iconColor: 'text-yellow-400',
         };
-      case 'rejected':
+      case 'unlikely_eligible':
         return {
           icon: Info,
           gradient: 'from-purple-400 to-indigo-500',
           bg: 'bg-purple-500/10',
           border: 'border-purple-500/30',
           iconColor: 'text-purple-400',
+        };
+      default:
+        return {
+          icon: AlertCircle,
+          gradient: 'from-yellow-400 to-amber-500',
+          bg: 'bg-yellow-500/10',
+          border: 'border-yellow-500/30',
+          iconColor: 'text-yellow-400',
         };
     }
   };

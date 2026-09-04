@@ -17,6 +17,7 @@ from app.db import engine
 from app.models import session, loan_application, agent_event
 from app.models import document as _doc_module
 from app.models import document_chunk as _chunk_module
+from app.models import loan_product as _loan_product_module
 from app.db import Base
 from sqlalchemy import inspect
 from app.schemas.loan_input import LoanInput
@@ -35,6 +36,8 @@ from app.db import SessionLocal
 from app.models.agent_event import AgentEvent
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
+from app.models.loan_product import LoanProduct
+from app.schemas.loan_product import LoanProductCreate, LoanProductOut, LoanProductFilter
 from fastapi.middleware.cors import CORSMiddleware
 
 logger = logging.getLogger("tata_mitra")
@@ -135,20 +138,20 @@ def get_dashboard_stats():
         # Total Applications
         total_apps = db.query(AgentEvent).filter(AgentEvent.event_type == "eligibility_decision").count()
         
-        # Approval/Rejection Counts
-        approved = db.query(AgentEvent).filter(
+        # Decision category counts (using current decision values)
+        likely_eligible = db.query(AgentEvent).filter(
             AgentEvent.event_type == "eligibility_decision",
-            AgentEvent.output_snapshot.like('%"decision": "approved"%')
+            AgentEvent.output_snapshot.like('%"decision": "likely_eligible"%')
         ).count()
         
-        rejected = db.query(AgentEvent).filter(
+        unlikely_eligible = db.query(AgentEvent).filter(
             AgentEvent.event_type == "eligibility_decision",
-            AgentEvent.output_snapshot.like('%"decision": "rejected"%')
+            AgentEvent.output_snapshot.like('%"decision": "unlikely_eligible"%')
         ).count()
         
-        conditional = db.query(AgentEvent).filter(
+        review_needed = db.query(AgentEvent).filter(
             AgentEvent.event_type == "eligibility_decision",
-            AgentEvent.output_snapshot.like('%"decision": "conditional"%')
+            AgentEvent.output_snapshot.like('%"decision": "review_needed"%')
         ).count()
         
         # Risk Distribution
@@ -172,12 +175,102 @@ def get_dashboard_stats():
         return {
             "summary": {
                 "total": total_apps,
-                "approved": approved,
-                "rejected": rejected,
-                "conditional": conditional
+                "likely_eligible": likely_eligible,
+                "unlikely_eligible": unlikely_eligible,
+                "review_needed": review_needed
             },
             "recent_events": events_data
         }
+    finally:
+        db.close()
+
+# ===========================================================================
+# PHASE 2 — LOAN PRODUCT DATABASE (CRUD)
+# ===========================================================================
+
+@app.get("/api/loan-products", response_model=list[LoanProductOut])
+def list_loan_products(
+    loan_type: str | None = None,
+    lender_name: str | None = None,
+    is_active: bool = True,
+    verification_status: str | None = None,
+):
+    """
+    List loan products with optional filters.
+    Returns only active, verified products by default.
+    """
+    db = SessionLocal()
+    try:
+        q = db.query(LoanProduct)
+        if is_active is not None:
+            q = q.filter(LoanProduct.is_active == is_active)
+        if loan_type:
+            q = q.filter(LoanProduct.loan_type == loan_type.lower())
+        if lender_name:
+            q = q.filter(LoanProduct.lender_name.ilike(f"%{lender_name}%"))
+        if verification_status:
+            q = q.filter(LoanProduct.verification_status == verification_status)
+        products = q.order_by(LoanProduct.lender_name).all()
+        return products
+    finally:
+        db.close()
+
+
+@app.get("/api/loan-products/{product_id}", response_model=LoanProductOut)
+def get_loan_product(product_id: str):
+    """Retrieve a single loan product by ID."""
+    db = SessionLocal()
+    try:
+        product = db.query(LoanProduct).filter(LoanProduct.product_id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Loan product not found")
+        return product
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/loan-products", response_model=LoanProductOut, dependencies=[Depends(require_admin)])
+def create_loan_product(data: LoanProductCreate):
+    """
+    Admin-only: Create or upsert a loan product.
+    If product_id is provided and already exists, updates the record.
+    """
+    db = SessionLocal()
+    try:
+        pid = data.product_id or str(uuid.uuid4())
+        existing = db.query(LoanProduct).filter(LoanProduct.product_id == pid).first()
+
+        if existing:
+            for field, value in data.dict(exclude_unset=True).items():
+                if field != "product_id":
+                    setattr(existing, field, value)
+            db.commit()
+            db.refresh(existing)
+            return existing
+        else:
+            record = LoanProduct(product_id=pid, **data.dict(exclude={"product_id"}))
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            return record
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.delete("/api/admin/loan-products/{product_id}", dependencies=[Depends(require_admin)])
+def delete_loan_product(product_id: str):
+    """Admin-only: Soft-delete a loan product (set is_active=False)."""
+    db = SessionLocal()
+    try:
+        product = db.query(LoanProduct).filter(LoanProduct.product_id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Loan product not found")
+        product.is_active = False
+        db.commit()
+        return {"status": "deleted", "product_id": product_id}
     finally:
         db.close()
 

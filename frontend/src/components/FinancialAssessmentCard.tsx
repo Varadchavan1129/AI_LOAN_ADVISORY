@@ -25,35 +25,41 @@ export const FinancialAssessmentCard = ({ data, title, message, advice, profile 
   const [showAssumptions, setShowAssumptions] = useState(false);
 
   const cfgMap = {
-    approved: {
+    likely_eligible: {
       icon: CheckCircle,
       gradient: 'from-emerald-400 to-green-500',
       badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
       cardBg: 'bg-emerald-950/20 border-emerald-500/30',
       barColor: 'bg-emerald-400',
-      statusText: 'Comfortable & Approved',
+      statusText: 'Potentially Eligible',
     },
-    conditional: {
+    review_needed: {
       icon: AlertCircle,
       gradient: 'from-amber-400 to-yellow-500',
       badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
       cardBg: 'bg-amber-950/20 border-amber-500/30',
       barColor: 'bg-amber-400',
-      statusText: 'Conditional Review',
+      statusText: 'Further Review Needed',
     },
-    rejected: {
+    unlikely_eligible: {
       icon: XCircle,
       gradient: 'from-red-400 to-rose-500',
       badge: 'bg-red-500/20 text-red-300 border-red-500/30',
       cardBg: 'bg-red-950/20 border-red-500/30',
       barColor: 'bg-red-400',
-      statusText: 'High Risk / Unmet Criteria',
+      statusText: 'Unlikely Eligible',
     },
   };
 
-  const decisionKey = (data.decision || 'conditional').toLowerCase() as keyof typeof cfgMap;
-  const cfg = cfgMap[decisionKey] ?? cfgMap.conditional;
+  const decisionKey = (data.decision || 'review_needed').toLowerCase() as keyof typeof cfgMap;
+  const cfg = cfgMap[decisionKey] ?? cfgMap.review_needed;
   const Icon = cfg.icon;
+
+  const decisionDisplayMap: Record<string, string> = {
+    likely_eligible: 'Potentially Eligible',
+    review_needed: 'Review Needed',
+    unlikely_eligible: 'Unlikely Eligible',
+  };
 
   const foirStatusColors: Record<string, { badge: string; text: string }> = {
     comfortable: { badge: 'bg-emerald-500/20 text-emerald-300', text: 'Comfortable (≤35%)' },
@@ -75,23 +81,23 @@ export const FinancialAssessmentCard = ({ data, title, message, advice, profile 
           <div>
             <div className="flex items-center gap-2">
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider border ${cfg.badge}`}>
-                {data.decision}
+                {decisionDisplayMap[data.decision] || data.decision}
               </span>
-              <span className="text-xs text-white/50">Financial Assessment</span>
+              <span className="text-xs text-white/50">Estimated Eligibility</span>
             </div>
             <h3 className="text-lg font-bold text-white mt-0.5">
-              {title || `Loan Application ${data.decision.toUpperCase()}`}
+              {title || `Financial Assessment — ${cfg.statusText}`}
             </h3>
           </div>
         </div>
 
         <div className="flex items-center gap-2 sm:self-center">
-          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-center min-w-[70px]">
-            <p className="text-[10px] uppercase text-white/40 font-semibold">Score</p>
+          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-center min-w-[70px]" title="Internal composite score based on FOIR, credit score, income adequacy, and ML risk model. Not a lender score.">
+            <p className="text-[10px] uppercase text-white/40 font-semibold">Est. Score</p>
             <p className="text-sm font-bold text-white">{data.eligibility_score}<span className="text-[10px] text-white/40">/100</span></p>
           </div>
-          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-center min-w-[70px]">
-            <p className="text-[10px] uppercase text-white/40 font-semibold">Risk</p>
+          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-center min-w-[70px]" title="ML-estimated default risk probability. For indicative purposes only.">
+            <p className="text-[10px] uppercase text-white/40 font-semibold">Risk Est.</p>
             <p className="text-sm font-bold text-white">{(data.risk_probability * 100).toFixed(0)}%</p>
           </div>
         </div>
@@ -247,6 +253,13 @@ export const FinancialAssessmentCard = ({ data, title, message, advice, profile 
           </AnimatePresence>
         </div>
       )}
+
+      {/* 8. Lender Disclaimer */}
+      <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 mt-1">
+        <p className="text-[11px] text-white/45 leading-relaxed text-center">
+          {data.disclaimer || 'Based on the information provided and the calculation assumptions. Final eligibility, pricing and approval are determined by the lender.'}
+        </p>
+      </div>
     </div>
   );
 };

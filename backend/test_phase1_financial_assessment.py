@@ -118,7 +118,7 @@ def test_ml_feature_builder_and_eligibility():
     # Check Eligibility decision
     eval_res = EligibilityAgent.evaluate(profile_good)
     print(f"Good Profile: Decision = {eval_res.decision}, Score = {eval_res.eligibility_score}, Risk = {eval_res.risk_probability}")
-    assert eval_res.decision == "approved"
+    assert eval_res.decision == "likely_eligible"
     assert eval_res.assessment is not None
     assert eval_res.assessment.estimated_emi > 0
     
@@ -135,7 +135,7 @@ def test_ml_feature_builder_and_eligibility():
     )
     eval_bad = EligibilityAgent.evaluate(profile_low_cibil)
     print(f"Low CIBIL / High FOIR Profile: Decision = {eval_bad.decision}, Score = {eval_bad.eligibility_score}, Risk = {eval_bad.risk_probability}")
-    assert eval_bad.decision in ["rejected", "conditional"]
+    assert eval_bad.decision in ["unlikely_eligible", "review_needed"]
     print("✓ ML Feature Builder & Eligibility Agent Test PASSED!")
 
 

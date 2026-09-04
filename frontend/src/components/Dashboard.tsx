@@ -7,9 +7,9 @@ import { LogOut, LayoutDashboard, Users, CheckCircle, XCircle, AlertTriangle } f
 interface DashboardStats {
     summary: {
         total: number;
-        approved: number;
-        rejected: number;
-        conditional: number;
+        likely_eligible: number;
+        unlikely_eligible: number;
+        review_needed: number;
     };
     recent_events: Array<{
         timestamp: string;
@@ -62,9 +62,9 @@ export const Dashboard = () => {
     }
 
     const pieData = [
-        { name: 'Approved', value: stats.summary.approved },
-        { name: 'Rejected', value: stats.summary.rejected },
-        { name: 'Conditional', value: stats.summary.conditional },
+        { name: 'Potentially Eligible', value: stats.summary.likely_eligible },
+        { name: 'Unlikely Eligible', value: stats.summary.unlikely_eligible },
+        { name: 'Review Needed', value: stats.summary.review_needed },
     ];
 
     const COLORS = ['#10b981', '#ef4444', '#f59e0b'];
@@ -119,20 +119,20 @@ export const Dashboard = () => {
                         color="bg-indigo-500"
                     />
                     <StatCard
-                        title="Approved"
-                        value={stats.summary.approved}
+                        title="Potentially Eligible"
+                        value={stats.summary.likely_eligible}
                         icon={CheckCircle}
                         color="bg-emerald-500"
                     />
                     <StatCard
-                        title="Rejected"
-                        value={stats.summary.rejected}
+                        title="Unlikely Eligible"
+                        value={stats.summary.unlikely_eligible}
                         icon={XCircle}
                         color="bg-red-500"
                     />
                     <StatCard
-                        title="Conditional"
-                        value={stats.summary.conditional}
+                        title="Review Needed"
+                        value={stats.summary.review_needed}
                         icon={AlertTriangle}
                         color="bg-amber-500"
                     />
