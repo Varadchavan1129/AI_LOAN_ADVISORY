@@ -500,6 +500,15 @@ def _answer_query(data: QueryRequest):
     # ELIGIBILITY CHECK (FALLBACK / BASIC)
     # ------------------------------------------------------------------
     elif intent == "eligibility_check":
+        # Safety guard: if the message is clearly asking about a policy/document
+        # (e.g. "What are the eligibility requirements mentioned in this policy?"),
+        # fall through to the RAG/general path rather than asking for income/loan.
+        if NLUAgent._is_policy_document_question(message):
+            intent = "general_question"
+            # Fall through to the else/RAG branch below by re-dispatching.
+            # We do this by passing control to the general handler logic.
+            return _handle_general_or_rag(message)
+
         monthly_income = ent.get("monthly_income")
         existing_emi   = ent.get("existing_emi") or 0
         loan_amount    = ent.get("loan_amount")
@@ -631,113 +640,126 @@ def _answer_query(data: QueryRequest):
     # first, then fall back to Gemini general QA if not in documents.
     # ------------------------------------------------------------------
     else:
-        # Step 1: Try RAG if any documents are indexed
-        stats = vector_store.get_stats()
-        if stats["total_chunks"] > 0:
-            try:
-                search_result   = vector_store.search(message, top_k=5)
-                # Lowered threshold: Gemini embeddings with FAISS dot-product
-                # produce scores typically in 0.40–0.65 for relevant content.
-                relevant_chunks = [c for c in search_result["results"] if c["score"] >= 0.45]
+        return _handle_general_or_rag(message)
 
-                if relevant_chunks:
-                    gen_result  = rag_agent.generate_answer(message, relevant_chunks)
 
-                    if gen_result.get("generation_failed"):
+def _handle_general_or_rag(message: str) -> dict:
+    """
+    Handle general_question and rejection_reason intents.
+    Step 1: Try RAG (FAISS retrieval + Gemini generation + Validation Agent).
+    Step 2: Fallback to Gemini general QA if no relevant documents are indexed.
+
+    This function is also called directly from the eligibility_check safety guard
+    when a question is identified as asking about a policy/document rather than
+    the user's personal eligibility.
+    """
+    # Step 1: Try RAG if any documents are indexed
+    stats = vector_store.get_stats()
+    if stats["total_chunks"] > 0:
+        try:
+            search_result   = vector_store.search(message, top_k=5)
+            # Lowered threshold: Gemini embeddings with FAISS dot-product
+            # produce scores typically in 0.40–0.65 for relevant content.
+            relevant_chunks = [c for c in search_result["results"] if c["score"] >= 0.45]
+
+            if relevant_chunks:
+                gen_result  = rag_agent.generate_answer(message, relevant_chunks)
+
+                if gen_result.get("generation_failed"):
+                    return {
+                        "type": "error",
+                        "message": (
+                            "The policy answer service is temporarily unavailable, so no answer "
+                            "could be generated from your documents. Please try again in a moment."
+                        ),
+                        "data": None,
+                    }
+
+                if not gen_result["not_in_evidence"] and gen_result["answer"]:
+                    val = validation_agent.validate_answer(
+                        message, gen_result["answer"], relevant_chunks
+                    )
+                    verdict = val["verdict"]
+
+                    ans_text = rag_agent.sanitize_rag_answer(gen_result["answer"])
+
+                    if verdict == "SUPPORTED":
                         return {
-                            "type": "error",
-                            "message": (
-                                "The policy answer service is temporarily unavailable, so no answer "
-                                "could be generated from your documents. Please try again in a moment."
-                            ),
-                            "data": None,
+                            "type":    "policy",
+                            "message": ans_text,
+                            "data": {
+                                "answer":        ans_text,
+                                "sources":       gen_result["sources"],
+                                "support_level": verdict,
+                                "is_verified":   True,
+                                "validation":    val,
+                            },
                         }
 
-                    if not gen_result["not_in_evidence"] and gen_result["answer"]:
-                        val = validation_agent.validate_answer(
-                            message, gen_result["answer"], relevant_chunks
-                        )
-                        verdict = val["verdict"]
-
-                        ans_text = rag_agent.sanitize_rag_answer(gen_result["answer"])
-
-                        if verdict == "SUPPORTED":
-                            return {
-                                "type":    "policy",
-                                "message": ans_text,
-                                "data": {
-                                    "answer":        ans_text,
-                                    "sources":       gen_result["sources"],
-                                    "support_level": verdict,
-                                    "is_verified":   True,
-                                    "validation":    val,
-                                },
-                            }
-
-                        elif verdict == "PARTIALLY_SUPPORTED":
-                            unsupported = val.get("unsupported_claims", [])
-                            final_ans   = (
-                                validation_agent.rewrite_for_partial_support(
-                                    message, gen_result["answer"],
-                                    relevant_chunks, unsupported
-                                )
-                                if unsupported else ans_text
+                    elif verdict == "PARTIALLY_SUPPORTED":
+                        unsupported = val.get("unsupported_claims", [])
+                        final_ans   = (
+                            validation_agent.rewrite_for_partial_support(
+                                message, gen_result["answer"],
+                                relevant_chunks, unsupported
                             )
-                            final_ans = rag_agent.sanitize_rag_answer(final_ans)
-                            return {
-                                "type":    "policy",
-                                "message": final_ans,
-                                "data": {
-                                    "answer":        final_ans,
-                                    "sources":       gen_result["sources"],
-                                    "support_level": verdict,
-                                    "is_verified":   False,
-                                    "validation":    val,
-                                },
-                            }
+                            if unsupported else ans_text
+                        )
+                        final_ans = rag_agent.sanitize_rag_answer(final_ans)
+                        return {
+                            "type":    "policy",
+                            "message": final_ans,
+                            "data": {
+                                "answer":        final_ans,
+                                "sources":       gen_result["sources"],
+                                "support_level": verdict,
+                                "is_verified":   False,
+                                "validation":    val,
+                            },
+                        }
 
-                        else:
-                            return {
-                                "type":    "policy",
-                                "message": ans_text,
-                                "data": {
-                                    "answer":        ans_text,
-                                    "sources":       gen_result["sources"],
-                                    "support_level": verdict,
-                                    "is_verified":   False,
-                                    "validation":    val,
-                                },
-                            }
+                    else:
+                        return {
+                            "type":    "policy",
+                            "message": ans_text,
+                            "data": {
+                                "answer":        ans_text,
+                                "sources":       gen_result["sources"],
+                                "support_level": verdict,
+                                "is_verified":   False,
+                                "validation":    val,
+                            },
+                        }
 
-                else:
-                    # Best-effort RAG: only attempt if top result has at least 0.35 similarity.
-                    # Prevents unrelated queries from pulling random PDF chunks.
-                    all_results = search_result.get("results", [])
-                    if all_results and all_results[0].get("score", 0) >= 0.35:
-                        best_effort_chunks = all_results[:3]
-                        gen_result = rag_agent.generate_answer(message, best_effort_chunks)
-                        if not gen_result["not_in_evidence"] and gen_result["answer"]:
-                            be_ans = rag_agent.sanitize_rag_answer(gen_result["answer"])
-                            return {
-                                "type":    "policy",
-                                "message": be_ans,
-                                "data": {
-                                    "answer":        be_ans,
-                                    "sources":       gen_result["sources"],
-                                    "support_level": "LOW_CONFIDENCE",
-                                    "is_verified":   False,
-                                },
-                            }
-            except Exception as rag_exc:
-                print(f"RAG routing error (falling back to general): {rag_exc}")
+            else:
+                # Best-effort RAG: only attempt if top result has at least 0.35 similarity.
+                # Prevents unrelated queries from pulling random PDF chunks.
+                all_results = search_result.get("results", [])
+                if all_results and all_results[0].get("score", 0) >= 0.35:
+                    best_effort_chunks = all_results[:3]
+                    gen_result = rag_agent.generate_answer(message, best_effort_chunks)
+                    if not gen_result["not_in_evidence"] and gen_result["answer"]:
+                        be_ans = rag_agent.sanitize_rag_answer(gen_result["answer"])
+                        return {
+                            "type":    "policy",
+                            "message": be_ans,
+                            "data": {
+                                "answer":        be_ans,
+                                "sources":       gen_result["sources"],
+                                "support_level": "LOW_CONFIDENCE",
+                                "is_verified":   False,
+                            },
+                        }
+        except Exception as rag_exc:
+            print(f"RAG routing error (falling back to general): {rag_exc}")
 
-        # Step 2: Fallback — Gemini general answer
-        answer = NLUAgent.answer_general_question(message)
-        return {
-            "type":    "general",
-            "message": answer,
-            "data":    None,
-        }
+    # Step 2: Fallback — Gemini general answer
+    answer = NLUAgent.answer_general_question(message)
+    return {
+        "type":    "general",
+        "message": answer,
+        "data":    None,
+    }
 
 
 # ===========================================================================

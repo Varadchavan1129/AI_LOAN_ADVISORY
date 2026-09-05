@@ -40,13 +40,18 @@ _INTENT_PROMPT = """You are a JSON-only financial intent and entity parser for a
 Analyse the user message and extract all available financial profile entities.
 
 INTENTS:
-- financial_profile_assessment: When user provides their financial profile details (e.g., income, EMI, CIBIL/credit score, loan amount, tenure, etc.) to evaluate overall affordability, FOIR, and loan eligibility. (e.g. "I earn ₹60,000, have an ₹8,000 EMI, CIBIL 750 and need ₹5 lakh for 3 years")
-- eligibility_check: Asking specifically about loan approval chances with basic numbers (e.g. "Can I get 5 lakh with 40k income?", "Will I qualify for a personal loan?")
-- emi_calculation: Asking specifically for monthly installment calculations (e.g. "What is the EMI for 2 lakhs over 2 years at 10%?")
-- max_loan_query: Asking for personal maximum borrowing capacity based on income (e.g. "What is the maximum loan I can get with 50k income?")
-- dti_query: Asking specifically about personal debt-to-income or FOIR ratio calculations.
-- rejection_reason: Asking why a loan was denied or how to improve credit profile.
-- general_question: General policy, regulatory, definition, or document queries (e.g. "What is maximum DTI allowed?", "What documents are required?", "How does CIBIL work?")
+- financial_profile_assessment: User provides their own financial profile details (income, EMI, CIBIL/credit score, loan amount, tenure) to evaluate personal affordability, FOIR, and eligibility. Example: "I earn ₹60,000, have an ₹8,000 EMI, CIBIL 750 and need ₹5 lakh for 3 years".
+- eligibility_check: User asks about THEIR OWN personal loan approval chances, typically with personal financial numbers. Examples: "Can I get 5 lakh with 40k income?", "Will I qualify for a personal loan?", "Am I eligible for a home loan?", "Can I get this loan?", "Check my loan eligibility". CRITICAL RULE: Do NOT use eligibility_check if the question asks about rules, criteria, requirements, or policies written IN a document/policy — those are general_question.
+- emi_calculation: User asks for a monthly installment calculation. Example: "What is the EMI for 2 lakhs over 2 years at 10%?".
+- max_loan_query: User asks for their personal maximum borrowing capacity based on income. Example: "What is the maximum loan I can get with 50k income?".
+- dti_query: User asks about their personal debt-to-income or FOIR ratio calculation.
+- rejection_reason: User asks why a loan was denied or how to improve their credit profile.
+- general_question: Questions about policy content, regulatory rules, document information, definitions, or general loan knowledge. This includes ANY question that references a document or policy ("in this policy", "in this document", "mentioned in", "as per the policy", "according to the document") OR asks about what rules/criteria/requirements/guidelines EXIST in general (not asking about the user's personal eligibility). Examples: "What are the eligibility requirements mentioned in this policy document?", "What are the rules mentioned in this policy?", "What is maximum DTI allowed?", "What documents are required?", "How does CIBIL work?", "What criteria are used for loan approval?", "What are the income requirements for this loan?".
+
+DISAMBIGUATION — eligibility_check vs general_question:
+- eligibility_check: The user is asking about THEMSELVES ("Can I...", "Am I...", "Will I...", "Do I qualify...", "Check my...", "My eligibility").
+- general_question: The user is asking about what is WRITTEN IN A POLICY/DOCUMENT, or asking about general rules/criteria that exist — NOT about their own personal approval chances.
+- If the question mentions "policy", "document", "mentioned in", "as per", "according to", "rules", "criteria" in the context of a document — it is ALWAYS general_question, even if the words "eligible" or "eligibility" appear in the question.
 
 EXTRACTION RULES:
 - Convert amounts: "5 lakh" -> 500000, "1.5 lakh" -> 150000, "1 crore" -> 10000000, "50k" -> 50000.
@@ -77,6 +82,46 @@ Respond with ONLY valid JSON:
 }}"""
 
 
+# ---------------------------------------------------------------------------
+# POLICY/DOCUMENT QUESTION PATTERNS
+# These signal that a question is asking about document/policy CONTENT,
+# NOT about the user's personal eligibility. Used as a post-LLM safety guard.
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_CONTEXT_PHRASES = [
+    "in this policy", "in this document", "mentioned in", "as per the policy",
+    "as per this policy", "according to the policy", "according to this policy",
+    "according to the document", "in the policy", "in the document",
+    "in this policy document", "policy document", "policy says", "document says",
+    "stated in", "written in", "per the policy", "per this document",
+]
+
+_DOCUMENT_INTENT_WORDS = [
+    "what are the rules", "what rules", "what are the criteria",
+    "what criteria", "what are the requirements", "what requirements",
+    "what are the guidelines", "what guidelines", "what are the terms",
+    "what terms", "what are the conditions", "what conditions",
+    "what does the policy", "what does this policy", "what does the document",
+    "explain the policy", "summarize the policy", "what is in the policy",
+]
+
+
+def _is_policy_document_question(message: str) -> bool:
+    """
+    Returns True if the message is clearly asking about content IN a policy
+    or document, rather than asking about the user's personal eligibility.
+    Used as a deterministic post-LLM override guard.
+    """
+    msg = message.lower()
+    # Explicit document-context phrases
+    if any(phrase in msg for phrase in _DOCUMENT_CONTEXT_PHRASES):
+        return True
+    # Explicit document-intent question patterns
+    if any(phrase in msg for phrase in _DOCUMENT_INTENT_WORDS):
+        return True
+    return False
+
+
 def parse_intent(message: str) -> dict:
     """Detect intent and extract financial entities via LLM, with regex fallback."""
     result = llm_text.complete_json(_INTENT_PROMPT.format(message=message))
@@ -84,6 +129,15 @@ def parse_intent(message: str) -> dict:
         return _regex_fallback(message)
     if "entities" not in result:
         result["entities"] = _empty_entities()
+
+    # ── Post-LLM safety guard ────────────────────────────────────────────────
+    # If Gemini classified this as eligibility_check but the message is clearly
+    # asking about a document or policy (not the user's personal eligibility),
+    # override the intent to general_question so it takes the RAG path.
+    if result.get("intent") == "eligibility_check" and _is_policy_document_question(message):
+        result["intent"] = "general_question"
+        result["confidence"] = max(result.get("confidence", 0.5), 0.75)
+
     return result
 
 
@@ -194,6 +248,8 @@ def _regex_fallback(message: str) -> dict:
         "vidyalakshmi", "subsidy", "interest subsidy", "who is eligible for", "eligible for interest"
     ]):
         intent = "general_question"
+    elif any(w in msg for w in ["policy", "document", "rules", "criteria", "requirements", "guidelines"]):
+        intent = "general_question"
     elif any(w in msg for w in [
         "how much loan", "how much can i", "maximum loan", "max loan",
         "how much home loan", "how much personal loan", "how much can i borrow"
@@ -216,7 +272,11 @@ def _regex_fallback(message: str) -> dict:
     elif any(w in msg for w in [
         "eligible", "eligibility", "qualify", "can i get", "will i get", "approve"
     ]):
-        intent = "eligibility_check"
+        # Only classify as eligibility_check if not clearly a policy/document question
+        if _is_policy_document_question(message):
+            intent = "general_question"
+        else:
+            intent = "eligibility_check"
     elif any(w in msg for w in [
         "emi", "monthly payment", "monthly installment", "how much per month"
     ]):
