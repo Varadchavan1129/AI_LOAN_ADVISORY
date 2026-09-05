@@ -1,0 +1,34 @@
+[
+  {
+    "id": "A",
+    "question": "What are the eligibility requirements mentioned in the policy document?",
+    "type": "error",
+    "verdict": "",
+    "sources_count": 0,
+    "message": "The policy answer service is temporarily unavailable, so no answer could be generated from your documents. Please try again in a moment."
+  },
+  {
+    "id": "B",
+    "question": "What is the minimum age requirement mentioned in the policy?",
+    "type": "error",
+    "verdict": "",
+    "sources_count": 0,
+    "message": "The policy answer service is temporarily unavailable, so no answer could be generated from your documents. Please try again in a moment."
+  },
+  {
+    "id": "C",
+    "question": "What is the maximum personal loan amount available to an astronaut?",
+    "type": "error",
+    "verdict": "",
+    "sources_count": 0,
+    "message": "The policy answer service is temporarily unavailable, so no answer could be generated from your documents. Please try again in a moment."
+  },
+  {
+    "id": "D",
+    "question": "What are the rules mentioned in this policy?",
+    "type": "error",
+    "verdict": "",
+    "sources_count": 0,
+    "message": "The policy answer service is temporarily unavailable, so no answer could be generated from your documents. Please try again in a moment."
+  }
+]
