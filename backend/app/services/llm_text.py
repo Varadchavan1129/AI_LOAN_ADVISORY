@@ -26,6 +26,8 @@ _EMERGENT_KEY = os.getenv("EMERGENT_LLM_KEY", "")
 _GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 
 GEMINI_MODEL = "gemini-2.5-flash"
+# Fallback model for older alias compatibility
+_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-3.6-flash"]
 
 
 def _run_async(coro):
@@ -62,14 +64,38 @@ def complete(user_text: str, system_message: str = "") -> str | None:
 
     # Fallback: user's own Gemini key via google.genai
     if _GEMINI_KEY and _GEMINI_KEY != "dummy":
-        try:
-            from google import genai
-            client = genai.Client(api_key=_GEMINI_KEY)
-            contents = (f"{system_message}\n\n{user_text}" if system_message else user_text)
-            r = client.models.generate_content(model="models/gemini-flash-latest", contents=contents)
-            return (r.text or "").strip()
-        except Exception as e:
-            logger.warning(f"User-key text gen failed: {e}")
+        import time
+        from google import genai
+        client = genai.Client(api_key=_GEMINI_KEY)
+        contents = (f"{system_message}\n\n{user_text}" if system_message else user_text)
+        # Try each working model in order; retry on transient 503 errors
+        for model_name in _FALLBACK_MODELS:
+            for attempt in range(3):
+                try:
+                    r = client.models.generate_content(model=model_name, contents=contents)
+                    return (r.text or "").strip()   # success — exits both loops
+                except Exception as e:
+                    err_str = str(e)
+                    if "503" in err_str or "UNAVAILABLE" in err_str:
+                        # Transient overload — retry with exponential backoff
+                        if attempt < 2:
+                            wait = (attempt + 1) * 2
+                            logger.warning(
+                                f"Gemini {model_name} 503 (attempt {attempt+1}/3), "
+                                f"retrying in {wait}s…"
+                            )
+                            time.sleep(wait)
+                        else:
+                            logger.warning(
+                                f"Gemini {model_name} 503 after 3 attempts, trying next model."
+                            )
+                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                        # Model endpoint removed — skip to next model immediately
+                        logger.warning(f"Gemini model {model_name} not available (404), trying next.")
+                        break   # break inner → continue outer (next model)
+                    else:
+                        logger.warning(f"User-key text gen failed ({model_name}): {e}")
+                        break   # Non-retriable error; try next model
 
     return None
 
