@@ -103,19 +103,42 @@ def _fallback_local_embed(texts: List[str]) -> np.ndarray:
 
 def _embed_texts(texts: List[str]) -> np.ndarray:
     """
-    Embed a list of texts, returning a float32 numpy array of shape (N, 3072).
+    Embed a list of texts in batches, returning a float32 numpy array of shape (N, 3072).
     Vectors are L2-normalised so dot-product ≡ cosine similarity.
     """
+    if not texts:
+        return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
+
     if os.getenv("FORCE_LOCAL_EMBED") == "1":
         return _fallback_local_embed(texts)
 
     all_values = []
+    client = _get_client()
+
     try:
-        # Test first chunk fast
-        if texts:
-            all_values.append(_embed_single(texts[0]))
-        for text in texts[1:]:
-            all_values.append(_embed_single(text))
+        for i in range(0, len(texts), EMBED_BATCH):
+            batch = texts[i : i + EMBED_BATCH]
+            for attempt in range(2):
+                try:
+                    response = client.models.embed_content(
+                        model=EMBEDDING_MODEL,
+                        contents=batch,
+                        config=types.EmbedContentConfig(
+                            task_type="SEMANTIC_SIMILARITY"
+                        ),
+                    )
+                    if hasattr(response, "embeddings") and response.embeddings:
+                        for emb in response.embeddings:
+                            all_values.append(emb.values)
+                    elif hasattr(response, "embedding") and response.embedding:
+                        all_values.append(response.embedding.values)
+                    break
+                except Exception as exc:
+                    if attempt == 0:
+                        print(f"VectorStore batch embed retry after error: {exc}")
+                        time.sleep(1)
+                    else:
+                        raise
 
         arr   = np.array(all_values, dtype=np.float32)
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
@@ -130,7 +153,7 @@ def _build_faiss_index(vectors: np.ndarray):
     import faiss  # local import — loaded only when needed
     idx = faiss.IndexFlatIP(EMBEDDING_DIM)
     if vectors.shape[0] > 0:
-        idx.add(vectors)
+        idx.add(vectors.astype(np.float32))
     return idx
 
 
@@ -189,15 +212,21 @@ def add_document(doc_id: str, doc_name: str, chunk_dicts: List[Dict]) -> int:
         Number of chunks added.
     """
     global _index, _chunks
+    import faiss
 
     with _lock:
-        # 1. Remove any old entries for this document
-        surviving = [c for c in _chunks if c["document_id"] != doc_id]
-        old_count = len(_chunks) - len(surviving)
+        # 1. Identify surviving chunks
+        surviving_indices = [i for i, c in enumerate(_chunks) if c["document_id"] != doc_id]
+        surviving_chunks = [_chunks[i] for i in surviving_indices]
+        old_count = len(_chunks) - len(surviving_chunks)
 
         if not chunk_dicts:
-            _chunks = surviving
-            _rebuild_index_from_metadata(surviving)
+            if surviving_chunks and _index is not None and _index.ntotal == len(_chunks):
+                surviving_embs = np.array([_index.reconstruct(i) for i in surviving_indices], dtype=np.float32)
+                _index = _build_faiss_index(surviving_embs)
+            else:
+                _rebuild_index_from_metadata(surviving_chunks)
+            _chunks = surviving_chunks
             save()
             return 0
 
@@ -206,14 +235,14 @@ def add_document(doc_id: str, doc_name: str, chunk_dicts: List[Dict]) -> int:
             f"for '{doc_name}' (removed {old_count} old entries)…"
         )
 
-        # 2. Embed chunks
+        # 2. Embed new chunks only
         texts      = [c["text"] for c in chunk_dicts]
-        embeddings = _embed_texts(texts)   # shape (N, 768)
+        embeddings = _embed_texts(texts)   # shape (N, 3072)
 
-        # 3. Rebuild index from surviving + new
-        all_chunks = surviving + [
+        # 3. Combine with surviving vectors
+        new_chunks = [
             {
-                "chunk_id":      c.get("chunk_id",    ""),
+                "chunk_id":      c.get("chunk_id", ""),
                 "document_id":   doc_id,
                 "document_name": doc_name,
                 "page_number":   c.get("page_number", 0),
@@ -224,15 +253,18 @@ def add_document(doc_id: str, doc_name: str, chunk_dicts: List[Dict]) -> int:
             for i, c in enumerate(chunk_dicts)
         ]
 
-        if surviving:
-            surviving_texts = [c["text"] for c in surviving]
-            surviving_embs  = _embed_texts(surviving_texts)
-            all_embs        = np.vstack([surviving_embs, embeddings])
+        if surviving_chunks:
+            if _index is not None and _index.ntotal == len(_chunks):
+                surviving_embs = np.array([_index.reconstruct(i) for i in surviving_indices], dtype=np.float32)
+            else:
+                surviving_texts = [c["text"] for c in surviving_chunks]
+                surviving_embs  = _embed_texts(surviving_texts)
+            all_embs = np.vstack([surviving_embs, embeddings])
         else:
             all_embs = embeddings
 
         _index  = _build_faiss_index(all_embs)
-        _chunks = all_chunks
+        _chunks = surviving_chunks + new_chunks
 
         # 4. Persist
         save()
@@ -252,16 +284,23 @@ def remove_document(doc_id: str) -> int:
         Number of chunks removed.
     """
     global _index, _chunks
+    import faiss
 
     with _lock:
-        surviving = [c for c in _chunks if c["document_id"] != doc_id]
-        removed   = len(_chunks) - len(surviving)
+        surviving_indices = [i for i, c in enumerate(_chunks) if c["document_id"] != doc_id]
+        surviving_chunks = [_chunks[i] for i in surviving_indices]
+        removed   = len(_chunks) - len(surviving_chunks)
 
         if removed == 0:
             return 0
 
-        _rebuild_index_from_metadata(surviving)
-        _chunks = surviving
+        if surviving_chunks and _index is not None and _index.ntotal == len(_chunks):
+            surviving_embs = np.array([_index.reconstruct(i) for i in surviving_indices], dtype=np.float32)
+            _index = _build_faiss_index(surviving_embs)
+        else:
+            _rebuild_index_from_metadata(surviving_chunks)
+
+        _chunks = surviving_chunks
         save()
         print(f"VectorStore: removed {removed} chunks for doc {doc_id}.")
         return removed

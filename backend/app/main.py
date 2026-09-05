@@ -675,63 +675,96 @@ def _handle_general_or_rag(message: str) -> dict:
                         "data": None,
                     }
 
-                if not gen_result["not_in_evidence"] and gen_result["answer"]:
-                    val = validation_agent.validate_answer(
-                        message, gen_result["answer"], relevant_chunks
-                    )
-                    verdict = val["verdict"]
-
-                    ans_text = rag_agent.sanitize_rag_answer(gen_result["answer"])
-
-                    if verdict == "SUPPORTED":
-                        return {
-                            "type":    "policy",
-                            "message": ans_text,
-                            "data": {
-                                "answer":        ans_text,
-                                "sources":       gen_result["sources"],
-                                "support_level": verdict,
-                                "is_verified":   True,
-                                "validation":    val,
+                if gen_result.get("not_in_evidence") or not gen_result.get("answer"):
+                    return {
+                        "type":    "policy",
+                        "message": "Information not found in the uploaded policy documents.",
+                        "data": {
+                            "answer":        "Information not found in the uploaded policy documents.",
+                            "sources":       [],
+                            "support_level": "UNSUPPORTED",
+                            "is_verified":   False,
+                            "validation": {
+                                "verdict":            "UNSUPPORTED",
+                                "reasoning":          "The retrieved policy document evidence does not contain information to answer this question.",
+                                "unsupported_claims": [],
                             },
-                        }
+                        },
+                    }
 
-                    elif verdict == "PARTIALLY_SUPPORTED":
-                        unsupported = val.get("unsupported_claims", [])
-                        final_ans   = (
-                            validation_agent.rewrite_for_partial_support(
-                                message, gen_result["answer"],
-                                relevant_chunks, unsupported
-                            )
-                            if unsupported else ans_text
+                val = validation_agent.validate_answer(
+                    message, gen_result["answer"], relevant_chunks
+                )
+                verdict = val["verdict"]
+
+                ans_text = rag_agent.sanitize_rag_answer(gen_result["answer"])
+
+                if verdict == "SUPPORTED":
+                    return {
+                        "type":    "policy",
+                        "message": ans_text,
+                        "data": {
+                            "answer":        ans_text,
+                            "sources":       gen_result["sources"],
+                            "support_level": verdict,
+                            "is_verified":   True,
+                            "validation":    val,
+                        },
+                    }
+
+                elif verdict == "PARTIALLY_SUPPORTED":
+                    unsupported = val.get("unsupported_claims", [])
+                    final_ans   = (
+                        validation_agent.rewrite_for_partial_support(
+                            message, gen_result["answer"],
+                            relevant_chunks, unsupported
                         )
-                        final_ans = rag_agent.sanitize_rag_answer(final_ans)
-                        return {
-                            "type":    "policy",
-                            "message": final_ans,
-                            "data": {
-                                "answer":        final_ans,
-                                "sources":       gen_result["sources"],
-                                "support_level": verdict,
-                                "is_verified":   False,
-                                "validation":    val,
-                            },
-                        }
+                        if unsupported else ans_text
+                    )
+                    final_ans = rag_agent.sanitize_rag_answer(final_ans)
+                    return {
+                        "type":    "policy",
+                        "message": final_ans,
+                        "data": {
+                            "answer":        final_ans,
+                            "sources":       gen_result["sources"],
+                            "support_level": verdict,
+                            "is_verified":   False,
+                            "validation":    val,
+                        },
+                    }
 
-                    else:
-                        return {
-                            "type":    "policy",
-                            "message": ans_text,
-                            "data": {
-                                "answer":        ans_text,
-                                "sources":       gen_result["sources"],
-                                "support_level": verdict,
-                                "is_verified":   False,
-                                "validation":    val,
-                            },
-                        }
+                else:
+                    return {
+                        "type":    "policy",
+                        "message": ans_text,
+                        "data": {
+                            "answer":        ans_text,
+                            "sources":       gen_result["sources"],
+                            "support_level": verdict,
+                            "is_verified":   False,
+                            "validation":    val,
+                        },
+                    }
 
             else:
+                if NLUAgent._is_policy_document_question(message):
+                    return {
+                        "type":    "policy",
+                        "message": "Information not found in the uploaded policy documents.",
+                        "data": {
+                            "answer":        "Information not found in the uploaded policy documents.",
+                            "sources":       [],
+                            "support_level": "UNSUPPORTED",
+                            "is_verified":   False,
+                            "validation": {
+                                "verdict":            "UNSUPPORTED",
+                                "reasoning":          "No relevant policy evidence was found for this question.",
+                                "unsupported_claims": [],
+                            },
+                        },
+                    }
+
                 # Best-effort RAG: only attempt if top result has at least 0.35 similarity.
                 # Prevents unrelated queries from pulling random PDF chunks.
                 all_results = search_result.get("results", [])
@@ -1106,6 +1139,7 @@ _FALLBACK_ANSWER = (
 
 
 @app.post("/api/rag/ask")
+@app.post("/rag/ask")
 def rag_ask(data: RAGRequest):
     """
     Full Phase 5 RAG pipeline:
